@@ -1,0 +1,32 @@
+# Core scientific libraries
+numpy
+scipy
+pandas
+matplotlib
+seaborn
+
+# Deep learning
+torch
+torchvision
+torchaudio
+pytorch-lightning
+tqdm
+
+# EEG / signal processing
+mne
+h5py
+
+# EMG classification 
+biosppy
+
+# ML utilities
+scikit-learn
+
+# Cloud access
+google-cloud-storage
+
+# Plotting 
+plotly
+
+# for dashboards and model demos
+streamlit
