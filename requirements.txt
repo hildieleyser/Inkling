@@ -4,6 +4,7 @@ scipy
 pandas
 matplotlib
 seaborn
+jupyter
 
 # Deep learning
 torch
@@ -16,7 +17,7 @@ tqdm
 mne
 h5py
 
-# EMG classification 
+# EMG classification
 biosppy
 
 # ML utilities
@@ -25,7 +26,7 @@ scikit-learn
 # Cloud access
 google-cloud-storage
 
-# Plotting 
+# Plotting
 plotly
 
 # for dashboards and model demos
