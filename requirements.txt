@@ -12,8 +12,9 @@ torchvision
 torchaudio
 pytorch-lightning
 tqdm
-tensorflow
-keras
+tensorflow==2.16.2
+keras==3.11.3
+tf_keras==2.16.0
 
 # EEG / signal processing
 mne
