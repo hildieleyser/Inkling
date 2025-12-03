@@ -12,6 +12,8 @@ torchvision
 torchaudio
 pytorch-lightning
 tqdm
+tensorflow
+keras
 
 # EEG / signal processing
 mne
