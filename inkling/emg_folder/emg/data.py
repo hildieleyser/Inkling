@@ -9,7 +9,7 @@ import pandas as pd
 from google.cloud import storage
 
 def parse_signal_cell(cell: str | np.ndarray | list | tuple) -> np.ndarray:
-    """Parse a corrupted/loosely formatted signal into a (16, N) float32 array."""
+    """Parse a co rrupted/loosely formatted signal into a (16, N) float32 array."""
     # If already array-like, trust and reshape as needed.
     if isinstance(cell, (np.ndarray, list, tuple)):
         arr = np.asarray(cell, dtype=np.float32)
