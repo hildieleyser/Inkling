@@ -1,0 +1,36 @@
+# Core scientific libraries
+numpy
+scipy
+pandas
+matplotlib
+seaborn
+jupyter
+
+# Deep learning
+torch
+torchvision
+torchaudio
+pytorch-lightning
+tqdm
+tensorflow==2.16.2
+keras==3.11.3
+tf_keras==2.16.0
+
+# EEG / signal processing
+mne
+h5py
+
+# EMG classification
+biosppy
+
+# ML utilities
+scikit-learn
+
+# Cloud access
+google-cloud-storage
+
+# Plotting
+plotly
+
+# for dashboards and model demos
+streamlit
