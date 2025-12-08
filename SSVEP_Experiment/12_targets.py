@@ -1,17 +1,35 @@
 from psychopy import visual, core, event
 import numpy as np
 import os
+import requests  # for HTTP calls
 
 ###########################################
 # CONFIG
 ###########################################
-DEBUG_KEYBOARD = False       # keyboard-only control
-USE_SIM_DATA = True          # drive EEG/EMG from simulated data when not in DEBUG
+DEBUG_KEYBOARD = True       # keyboard-only control
+USE_SIM_DATA = False         # drive EEG/EMG from simulated data when not in DEBUG
 SIM_DATA_PATH = "eeg_emg_helloworld.npz"
 EMG_BURST_THRESH = 0.5       # envelope/percentile cutoff for sim EMG confirm
 STIM_TIME_KEY = 5.0          # seconds of flicker before querying main keypad EEG
 STIM_TIME_LETTER = 5.0       # seconds of flicker before querying letter EEG
 FONT_NAME = "Helvetica"
+
+# FastAPI servers
+EEG_API_URL = "http://127.0.0.1:8000/predict"        # from fast.py
+EMG_API_URL = "http://127.0.0.1:8001/predict_file"   # from EMG API
+
+# File lists for offline testing (YOU fill these)
+EEG_FILES = [
+    r"/Users/hildieleyser/code/hildieleyser/Inkling/S001.mat",  # example if this is your file
+]
+EMG_FILES = [
+    r"/Users/hildieleyser/code/hildieleyser/Inkling/EMG Data Participant 1 Day 1 Block 1.hdf5",
+    # r"/absolute/path/to/your_emg_file2.hdf5",
+]
+
+_EEG_FILE_IDX = 0
+_EMG_FILE_IDX = 0
+_EEG_TARGET_IDX = 0
 
 # --- Universal Box Size (SAME AS 12-TARGET KEYPAD) ---
 BOX_W = 0.42
@@ -71,6 +89,44 @@ EEG_LETTER_THRESH = 0.8
 _SIM_DATA = None
 _SIM_EEG_IDX = 0
 _SIM_EMG_IDX = 0
+
+def _next_eeg_file():
+    """
+    Cycle through EEG_FILES and return one path each time.
+    """
+    global _EEG_FILE_IDX
+    if not EEG_FILES:
+        raise RuntimeError("EEG_FILES list is empty. Add your .mat paths.")
+    path = EEG_FILES[_EEG_FILE_IDX % len(EEG_FILES)]
+    _EEG_FILE_IDX += 1
+    return path
+
+
+def _next_emg_file():
+    """
+    Cycle through EMG_FILES and return one path each time.
+    """
+    global _EMG_FILE_IDX
+    if not EMG_FILES:
+        raise RuntimeError("EMG_FILES list is empty. Add your .hdf5 paths.")
+    path = EMG_FILES[_EMG_FILE_IDX % len(EMG_FILES)]
+    _EMG_FILE_IDX += 1
+    return path
+
+
+def _next_eeg_params():
+    """
+    Provide block/trial/target indices for EEG API calls.
+    Currently cycles target_idx 0..11 while keeping block/trial at 0.
+    """
+    global _EEG_TARGET_IDX
+    params = {
+        "block_idx": 0,
+        "trial_idx": 0,
+        "target_idx": _EEG_TARGET_IDX % 12,
+    }
+    _EEG_TARGET_IDX += 1
+    return params
 
 ###########################################
 # WINDOW
@@ -141,18 +197,45 @@ def _freq_logits_from_signal(sig, fs):
 
 def get_eeg_logits():
     """
-    TODO: replace this with your real EEG pipeline.
-    It should return a length-12 array of logits or probabilities
-    from the main model for the current EEG window.
+    For file-based FastAPI integration:
+    - Upload one .mat file to EEG API `/predict`
+    - Read the 0..11 class prediction
+    - Convert that into a 'logit' vector (big value on predicted class)
     """
+    # If you want to keep the NPZ simulator for dev, you can leave this:
     if USE_SIM_DATA and not DEBUG_KEYBOARD:
         sig, label, fs = _next_sim_eeg()
         logits = _freq_logits_from_signal(sig, fs)
-        logits[label] += 1.0  # small boost toward true label
+        logits[label] += 1.0
         return logits
 
-    logits = np.zeros(12)
-    # fill logits from your model here when using real EEG
+    if DEBUG_KEYBOARD:
+        # Not really used in this function any more when DEBUG_KEYBOARD=False
+        return np.zeros(12, dtype=float)
+
+    # ------------ REAL EEG VIA FASTAPI + FILE UPLOAD ------------
+    mat_path = _next_eeg_file()
+    try:
+        with open(mat_path, "rb") as f:
+            files = {"file": (os.path.basename(mat_path), f, "application/octet-stream")}
+            # Cycle through targets so you don't always read the same epoch
+            params = _next_eeg_params()
+            resp = requests.post(EEG_API_URL, files=files, params=params, timeout=10.0)
+
+        resp.raise_for_status()
+        data = resp.json()
+        pred_class = int(data["prediction"])   # 0..11 from your EEG API
+        print(f"EEG API: {mat_path} params={params} -> pred {pred_class}")
+
+    except Exception as e:
+        print(f"EEG API error for file {mat_path}: {e}")
+        # Return neutral logits (no strong decision)
+        return np.zeros(12, dtype=float)
+
+    # Convert class index into pseudo-logits:
+    # big positive for predicted class, negative for others
+    logits = np.full(12, -5.0, dtype=float)
+    logits[pred_class] = 5.0
     return logits
 
 
@@ -206,17 +289,41 @@ def emg_confirm():
     use_keyboard = DEBUG_KEYBOARD and not USE_SIM_DATA
     if use_keyboard:
         keys = event.getKeys()
-        if "y" in keys: return True
-        if "n" in keys: return False
+        if "y" in keys:
+            return True
+        if "n" in keys:
+            return False
         return None
+
     if USE_SIM_DATA:
+        # keep your existing simulated EMG behaviour if you want
         sig, fs, label = _next_sim_emg()
         env = np.percentile(np.abs(sig), 95)
         decision = bool(env > EMG_BURST_THRESH)
         if label is not None:
             return bool(label)
         return decision
-    return None
+
+    # ------------ REAL EMG VIA FASTAPI + FILE UPLOAD ------------
+    h5_path = _next_emg_file()
+
+    try:
+        with open(h5_path, "rb") as f:
+            files = {"file": (os.path.basename(h5_path), f, "application/octet-stream")}
+            data = {"dataset": "0"}   # change if you use a different dataset name
+            resp = requests.post(EMG_API_URL, files=files, data=data, timeout=10.0)
+
+        resp.raise_for_status()
+        out = resp.json()
+        # Your EMG API returns {"filename": ..., "result": 0/1, "gesture": "..."}
+        result = int(out["result"])
+
+    except Exception as e:
+        print(f"EMG API error for file {h5_path}: {e}")
+        return None   # so the UI keeps polling
+
+    # 0 = NO, 1 = YES
+    return bool(result)
 
 ###########################################
 # UI Helper
