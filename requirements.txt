@@ -34,3 +34,11 @@ plotly
 
 # for dashboards and model demos
 streamlit
+
+#Apparatus
+psychopy
+
+#API imports
+fastapi
+uvicorn
+python-multipart
