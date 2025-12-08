@@ -7,7 +7,7 @@ from typing import Tuple
 
 import numpy as np
 import torch
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from scipy.io import loadmat
 
 # ============================================================
@@ -16,6 +16,7 @@ from scipy.io import loadmat
 
 HERE = Path(__file__).resolve().parent          # .../inkling/api_eeg
 PROJECT_ROOT = HERE.parent                      # .../inkling  (repo root)
+
 
 def _find_ssvep_package(start: Path) -> Tuple[Path, Path]:
     """
@@ -33,6 +34,7 @@ def _find_ssvep_package(start: Path) -> Tuple[Path, Path]:
         "Make sure your project contains a 'ssvep' folder with an __init__.py."
     )
 
+
 def _import_ssvep():
     """
     Locate the ssvep package, add its parent to sys.path, and import:
@@ -49,7 +51,6 @@ def _import_ssvep():
     try:
         ssvep = importlib.import_module("ssvep")
         data_mod = importlib.import_module("ssvep.data")
-        # config_mod = importlib.import_module("ssvep.config")  # if needed
     except ImportError as e:
         raise RuntimeError(
             f"Found ssvep package at {pkg_dir}, but could not import it: {e}"
@@ -59,6 +60,7 @@ def _import_ssvep():
     preprocess_epoch = getattr(data_mod, "preprocess_epoch")
 
     return EEGNet, preprocess_epoch
+
 
 # Do the dynamic import once at module import time
 EEGNet, preprocess_epoch = _import_ssvep()
@@ -79,10 +81,10 @@ N_CLASSES = 12
 
 app = FastAPI(title="EEG SSVEP Inference API")
 
-
 # ============================================================
 # MODEL LOADING (USING YOUR REAL EEGNET)
 # ============================================================
+
 
 def load_model(model_path: Path = MODEL_PATH):
     if not model_path.exists():
@@ -96,28 +98,109 @@ def load_model(model_path: Path = MODEL_PATH):
     print("[fast.py] Model loaded and set to eval mode.")
     return model
 
-model = load_model()
 
+model = load_model()
 
 # ============================================================
 # .MAT HANDLING
 # ============================================================
 
-def _extract_epoch_from_mat(contents: bytes) -> np.ndarray:
+
+def _extract_epoch_from_mat(
+    contents: bytes,
+    block_idx: int = 0,
+    trial_idx: int = 0,
+    target_idx: int = 0,
+) -> np.ndarray:
     """
     Load .mat from raw bytes and return a 2D (channels, time) array
     suitable for preprocess_epoch.
 
-    Heuristics:
+    For typical Wearable SSVEP Dataset-style files with:
+        data.shape == (8, 710, n_blocks, n_trials, n_targets)
+    we take:
+        epoch = data[:, :, block_idx, trial_idx, target_idx]  -> (8, 710)
+
+    Fallback:
       - Accept arrays of any ndim
       - Squeeze singleton dims
       - If ndim > 2, progressively slice the first index until 2D
-      - Ensure one dimension == N_CHANS (8) → that's the channel axis
+      - Ensure one dimension == N_CHANS (8) → channel axis
       - Transpose if needed so final shape is (N_CHANS, time)
       - Require at least 660 samples in the time dimension
     """
     bio = io.BytesIO(contents)
     mat = loadmat(bio)
+
+    # ---- 1) Preferred path: explicit 'data' with multi-epoch structure ----
+    if "data" in mat and isinstance(mat["data"], np.ndarray):
+        data = np.array(mat["data"])
+        # Expected: (n_chans, n_time, [n_block, n_trial, n_target, ...])
+        if data.ndim >= 3 and data.shape[0] == N_CHANS:
+            # If 5D: (ch, time, block, trial, target)
+            if data.ndim >= 5:
+                n_blocks = data.shape[2]
+                n_trials = data.shape[3]
+                n_targets = data.shape[4]
+
+                if not (0 <= block_idx < n_blocks):
+                    raise ValueError(
+                        f"block_idx out of range: {block_idx} (valid 0..{n_blocks-1})"
+                    )
+                if not (0 <= trial_idx < n_trials):
+                    raise ValueError(
+                        f"trial_idx out of range: {trial_idx} (valid 0..{n_trials-1})"
+                    )
+                if not (0 <= target_idx < n_targets):
+                    raise ValueError(
+                        f"target_idx out of range: {target_idx} (valid 0..{n_targets-1})"
+                    )
+
+                epoch = data[:, :, block_idx, trial_idx, target_idx]  # (8, 710, ...)
+                epoch = np.squeeze(epoch)
+
+            # If 4D: (ch, time, block, epoch) – use block_idx and target_idx
+            elif data.ndim == 4:
+                n_blocks = data.shape[2]
+                n_epochs = data.shape[3]
+                if not (0 <= block_idx < n_blocks):
+                    raise ValueError(
+                        f"block_idx out of range: {block_idx} (valid 0..{n_blocks-1})"
+                    )
+                if not (0 <= target_idx < n_epochs):
+                    raise ValueError(
+                        f"target_idx out of range: {target_idx} (valid 0..{n_epochs-1})"
+                    )
+                epoch = data[:, :, block_idx, target_idx]
+                epoch = np.squeeze(epoch)
+
+            # If 3D: (ch, time, epoch) – use target_idx as epoch index
+            elif data.ndim == 3:
+                n_epochs = data.shape[2]
+                if not (0 <= target_idx < n_epochs):
+                    raise ValueError(
+                        f"target_idx out of range: {target_idx} (valid 0..{n_epochs-1})"
+                    )
+                epoch = data[:, :, target_idx]
+                epoch = np.squeeze(epoch)
+
+            else:
+                epoch = None
+
+            if epoch is not None and epoch.ndim == 2:
+                if epoch.shape[0] != N_CHANS:
+                    epoch = epoch.T
+                if epoch.shape[0] != N_CHANS:
+                    raise ValueError(
+                        f"Selected epoch does not have {N_CHANS} channels: {epoch.shape}"
+                    )
+                if epoch.shape[1] < 660:
+                    raise ValueError(
+                        f"Selected epoch does not have enough samples (got {epoch.shape[1]}, need >=660)."
+                    )
+                return epoch.astype(np.float64)
+
+    # ---- 2) Fallback heuristic for any other .mat layout ----
 
     def _try_make_epoch(arr: np.ndarray) -> np.ndarray | None:
         a = np.array(arr)
@@ -136,26 +219,26 @@ def _extract_epoch_from_mat(contents: bytes) -> np.ndarray:
 
         # Make channels dimension first
         if a.shape[0] == N_CHANS:
-            epoch = a
+            epoch_ = a
         elif a.shape[1] == N_CHANS:
-            epoch = a.T
+            epoch_ = a.T
         else:
             return None
 
         # Need enough timepoints to safely do epoch[:, 160:660]
-        if epoch.shape[1] < 660:  # your pipeline crops 160:660 → 500
+        if epoch_.shape[1] < 660:  # your pipeline crops 160:660 → 500
             return None
 
-        return epoch.astype(np.float64)
+        return epoch_.astype(np.float64)
 
-    # 1) Try nice key names first
-    for key in ["epoch", "data", "EEG", "eeg", "X", "signal"]:
+    # 2a) Try nice key names first
+    for key in ["epoch", "EEG", "eeg", "X", "signal"]:
         if key in mat and isinstance(mat[key], np.ndarray):
             candidate = _try_make_epoch(mat[key])
             if candidate is not None:
                 return candidate
 
-    # 2) Fallback: scan all arrays in the .mat
+    # 2b) Fallback: scan all arrays in the .mat
     for v in mat.values():
         if isinstance(v, np.ndarray):
             candidate = _try_make_epoch(v)
@@ -164,10 +247,10 @@ def _extract_epoch_from_mat(contents: bytes) -> np.ndarray:
 
     raise ValueError("No suitable EEG array (8 channels, >=660 samples) found in .mat file")
 
-
 # ============================================================
 # API ENDPOINTS
 # ============================================================
+
 
 @app.get("/health")
 async def health():
@@ -175,10 +258,22 @@ async def health():
 
 
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)):
+async def predict(
+    file: UploadFile = File(...),
+    block_idx: int = Query(0, description="Block index (e.g. 0..1)"),
+    trial_idx: int = Query(0, description="Trial index (e.g. 0..9)"),
+    target_idx: int = Query(0, description="Target index (e.g. 0..11)"),
+):
     """
-    Upload a .mat file containing a single raw EEG epoch.
-    Uses your existing preprocess_epoch() and EEGNet model to predict.
+    Upload a .mat file containing multiple epochs and choose which one to classify.
+
+    For typical data arrays with shape (8, 710, n_blocks, n_trials, n_targets),
+    you can select:
+      - block_idx: which block/session
+      - trial_idx: which trial within that block/target
+      - target_idx: which SSVEP stimulus/target
+
+    Uses your existing preprocess_epoch() and EEGNet model.
     """
     if not file.filename.endswith(".mat"):
         raise HTTPException(status_code=400, detail="Only .mat files are supported")
@@ -187,7 +282,12 @@ async def predict(file: UploadFile = File(...)):
 
     # 1. Extract raw epoch from .mat
     try:
-        epoch_raw = _extract_epoch_from_mat(contents)   # shape (channels, time)
+        epoch_raw = _extract_epoch_from_mat(
+            contents,
+            block_idx=block_idx,
+            trial_idx=trial_idx,
+            target_idx=target_idx,
+        )   # shape (channels, time)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error reading .mat: {e}")
 
@@ -200,14 +300,14 @@ async def predict(file: UploadFile = File(...)):
     if epoch_pp.ndim != 2:
         raise HTTPException(
             status_code=400,
-            detail=f"Expected preprocessed epoch to be 2D, got {epoch_pp.shape}"
+            detail=f"Expected preprocessed epoch to be 2D, got {epoch_pp.shape}",
         )
 
     chans, time = epoch_pp.shape
     if chans != N_CHANS:
         raise HTTPException(
             status_code=400,
-            detail=f"Expected {N_CHANS} channels after preprocessing, got {chans}"
+            detail=f"Expected {N_CHANS} channels after preprocessing, got {chans}",
         )
 
     # 3. Forward pass
@@ -216,12 +316,13 @@ async def predict(file: UploadFile = File(...)):
     with torch.no_grad():
         logits = model(x)
         pred_class = int(logits.argmax(dim=1).item())
-        probs = torch.softmax(logits, dim=1).cpu().numpy().tolist()[0]
 
     return {
         "filename": file.filename,
+        "block_idx": block_idx,
+        "trial_idx": trial_idx,
+        "target_idx": target_idx,
         "prediction": pred_class,
-    #    "probabilities": probs,
     }
 
 
