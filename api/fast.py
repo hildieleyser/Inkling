@@ -25,7 +25,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+def root():
+    return {'inkling': 'it is up'}
 
+
+
+<<<<<<< HEAD
+# http://127.0.0.1:8000/predict?EMG_signal_array(shape=1
+@app.get("/predict")
+def predict(
+        pickup_datetime: str,  # 2014-07-06 19:18:00
+        pickup_longitude: float,    # -73.950655
+        pickup_latitude: float,     # 40.783282
+        dropoff_longitude: float,   # -73.984365
+        dropoff_latitude: float,    # 40.769802
+        passenger_count: int
+    ):      # 1
+    """
+    Make a single course prediction.
+    Assumes `pickup_datetime` is provided as a string by the user in "%Y-%m-%d %H:%M:%S" format
+    Assumes `pickup_datetime` implicitly refers to the "US/Eastern" timezone (as any user in New York City would naturally write)
+    """
+=======
 # # http://127.0.0.1:8000/predict?data={xxxxxxxxxxxxxxxxxx}
 # @app.post("/predict")
 # def predict(data: str, dataset: str = "0"):
@@ -92,3 +114,4 @@ async def predict_file(file: UploadFile = File(...), dataset: str = "0"):
         "result": result,
         "gesture": GESTURE_LABELS[result]
     }
+>>>>>>> d939f221b19436ae635c253ac73973de07f8f4fa
