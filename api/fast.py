@@ -17,6 +17,11 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
+@app.get("/")
+def root():
+    return {'inkling': 'it is up'}
+
+
 
 # http://127.0.0.1:8000/predict?EMG_signal_array(shape=1
 @app.get("/predict")
