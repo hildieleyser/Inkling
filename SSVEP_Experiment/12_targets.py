@@ -5,6 +5,7 @@ import numpy as np
 # CONFIG
 ###########################################
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 DEBUG_KEYBOARD = True
 FONT_NAME = "Helvetica"
 
@@ -17,6 +18,16 @@ STIM_TIME_KEY = 5.0         # seconds of flicker before querying main keypad EEG
 STIM_TIME_LETTER = 5.0      # seconds of flicker before querying letter EEG
 FONT_NAME = "Helvetica"
 
+=======
+DEBUG_KEYBOARD = True       # keyboard-only control
+USE_SIM_DATA = False        # drive EEG/EMG from simulated data when not in DEBUG
+SIM_DATA_PATH = "eeg_emg_helloworld.npz"
+EMG_BURST_THRESH = 0.5      # envelope/percentile cutoff for sim EMG confirm
+STIM_TIME_KEY = 5.0         # seconds of flicker before querying main keypad EEG
+STIM_TIME_LETTER = 5.0      # seconds of flicker before querying letter EEG
+FONT_NAME = "Helvetica"
+
+>>>>>>> Stashed changes
 # Debug overlay: show real flicker frequencies above each box
 SHOW_DEBUG_OVERLAY_DEFAULT = True   # initial state
 _debug_overlay_on = SHOW_DEBUG_OVERLAY_DEFAULT
@@ -108,6 +119,9 @@ _SIM_DATA = None
 _SIM_EEG_IDX = 0
 _SIM_EMG_IDX = 0
 
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 ###########################################
 # WINDOW
@@ -123,7 +137,10 @@ win = visual.Window(
 # SIM HELPERS
 ###########################################
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
 def _next_eeg_file():
     global _EEG_FILE_IDX
     if not EEG_FILES:
@@ -242,6 +259,9 @@ def _eeg_predict_from_subset(active_ids, thresh=None):
         return None
     return k
 
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 def eeg_predict_key():
     if DEBUG_KEYBOARD:
