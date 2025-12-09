@@ -1,15 +1,11 @@
 from psychopy import visual, core, event
 import numpy as np
+import os
+import requests  # for HTTP calls
 
 ###########################################
 # CONFIG
 ###########################################
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-DEBUG_KEYBOARD = True
-FONT_NAME = "Helvetica"
-
-=======
 DEBUG_KEYBOARD = True       # keyboard-only control
 USE_SIM_DATA = False        # drive EEG/EMG from simulated data when not in DEBUG
 SIM_DATA_PATH = "eeg_emg_helloworld.npz"
@@ -18,16 +14,6 @@ STIM_TIME_KEY = 5.0         # seconds of flicker before querying main keypad EEG
 STIM_TIME_LETTER = 5.0      # seconds of flicker before querying letter EEG
 FONT_NAME = "Helvetica"
 
-=======
-DEBUG_KEYBOARD = True       # keyboard-only control
-USE_SIM_DATA = False        # drive EEG/EMG from simulated data when not in DEBUG
-SIM_DATA_PATH = "eeg_emg_helloworld.npz"
-EMG_BURST_THRESH = 0.5      # envelope/percentile cutoff for sim EMG confirm
-STIM_TIME_KEY = 5.0         # seconds of flicker before querying main keypad EEG
-STIM_TIME_LETTER = 5.0      # seconds of flicker before querying letter EEG
-FONT_NAME = "Helvetica"
-
->>>>>>> Stashed changes
 # Debug overlay: show real flicker frequencies above each box
 SHOW_DEBUG_OVERLAY_DEFAULT = True   # initial state
 _debug_overlay_on = SHOW_DEBUG_OVERLAY_DEFAULT
@@ -48,7 +34,6 @@ _EEG_FILE_IDX = 0
 _EMG_FILE_IDX = 0
 _EEG_TARGET_IDX = 0
 
->>>>>>> Stashed changes
 # --- Universal Box Size (SAME AS 12-TARGET KEYPAD) ---
 BOX_W = 0.42
 BOX_H = 0.30
@@ -71,10 +56,6 @@ PHASES_MAIN = [
     1.5 * np.pi,   1.5 * np.pi,   1.5 * np.pi    # 0,*,#
 ]
 
-# --- Letter panel SSVEP frequencies ---
-FREQS_LETTER = [8.0, 9.0, 10.0, 11.0, 12.0]
-PHASES_LETTER = [0.0, np.pi/2, np.pi, 3*np.pi/2, np.pi/4]
-
 # --- Keypad labels ---
 KEYPAD_LABELS = [
     "1","2","3",
@@ -94,8 +75,6 @@ LETTER_MAP = {
     "9": ["W","X","Y","Z"]
 }
 
-<<<<<<< Updated upstream
-=======
 # Which 12-class indices are used for each letter panel
 # (indices refer to FREQS_MAIN / PHASES_MAIN)
 LETTER_CLASS_IDS = {
@@ -119,10 +98,6 @@ _SIM_DATA = None
 _SIM_EEG_IDX = 0
 _SIM_EMG_IDX = 0
 
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
 ###########################################
 # WINDOW
 ###########################################
@@ -136,11 +111,6 @@ win = visual.Window(
 ###########################################
 # SIM HELPERS
 ###########################################
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
-=======
->>>>>>> Stashed changes
 def _next_eeg_file():
     global _EEG_FILE_IDX
     if not EEG_FILES:
@@ -259,12 +229,9 @@ def _eeg_predict_from_subset(active_ids, thresh=None):
         return None
     return k
 
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
 def eeg_predict_key():
-    if DEBUG_KEYBOARD:
+    use_keyboard = DEBUG_KEYBOARD and not USE_SIM_DATA
+    if use_keyboard:
         keys = event.getKeys()
         for k in keys:
             if k in ["1","2","3","4","5","6","7","8","9","0"]:
@@ -274,27 +241,30 @@ def eeg_predict_key():
             if k == "num_add":
                 return KEYPAD_LABELS.index("#")
         return None
-    return None
+    active_ids = list(range(12))
+    return _eeg_predict_from_subset(active_ids, thresh=EEG_KEY_THRESH)
 
-def eeg_predict_letter(n_items):
-    if DEBUG_KEYBOARD:
+def eeg_predict_letter(key, n_items):
+    use_keyboard = DEBUG_KEYBOARD and not USE_SIM_DATA
+    if use_keyboard:
         mapping = ["a","b","c","d","e"]
         keys = event.getKeys()
         for i,k in enumerate(mapping[:n_items]):
             if k in keys:
                 return i
         return None
-    return None
+    active_ids = LETTER_CLASS_IDS[key][:n_items]
+    return _eeg_predict_from_subset(active_ids, thresh=EEG_LETTER_THRESH)
 
 def emg_confirm():
-    if DEBUG_KEYBOARD:
+    use_keyboard = DEBUG_KEYBOARD and not USE_SIM_DATA
+    if use_keyboard:
         keys = event.getKeys()
-        if "y" in keys: return True
-        if "n" in keys: return False
+        if "y" in keys:
+            return True
+        if "n" in keys:
+            return False
         return None
-<<<<<<< Updated upstream
-    return None
-=======
 
     if USE_SIM_DATA:
         sig, fs, label = _next_sim_emg()
@@ -320,7 +290,6 @@ def emg_confirm():
         return None
 
     return bool(result)
->>>>>>> Stashed changes
 
 ###########################################
 # UI Helper
@@ -421,7 +390,7 @@ def run_main_keypad(buffer_text):
 
         win.flip()
 
-        if t > 1.0:
+        if t > STIM_TIME_KEY:
             idx = eeg_predict_key()
             if idx is not None:
                 return KEYPAD_LABELS[idx]
@@ -466,8 +435,7 @@ def run_letter_panel(key, buffer_text):
         panel_items = [key] + LETTER_MAP[key]
 
     n = len(panel_items)
-    freqs = FREQS_LETTER[:n]
-    phases = PHASES_LETTER[:n]
+    class_ids = LETTER_CLASS_IDS[key][:n]
 
     # Layout rules
     if key == "0":  # 3 items → one row
@@ -545,7 +513,10 @@ def run_letter_panel(key, buffer_text):
         instr.draw()
 
         for i in range(n):
-            lum = np.clip(0.4 + 0.5*np.sin(2*np.pi*freqs[i]*t + phases[i]),0,1)
+            cls_id = class_ids[i]
+            freq = FREQS_MAIN[cls_id]
+            phase = PHASES_MAIN[cls_id]
+            lum = np.clip(0.4 + 0.5*np.sin(2*np.pi*freq*t + phase),0,1)
             boxes[i].fillColor = [lum,lum,lum]
             boxes[i].draw()
             texts[i].draw()
@@ -554,8 +525,8 @@ def run_letter_panel(key, buffer_text):
 
         win.flip()
 
-        if t > 1.0:
-            idx = eeg_predict_letter(n)
+        if t > STIM_TIME_LETTER:
+            idx = eeg_predict_letter(key, n_items=n)
             if idx is not None:
                 return panel_items[idx]
 
