@@ -1,36 +1,661 @@
 # bci_speller_app.py
-#
-# Streamlit UI for EEG+EMG Nokia-style speller.
-#
-# - EEG FastAPI (12-class) at EEG_API_URL: /predict
-#   returns { "prediction": 0..11 }
-# - EMG FastAPI (binary) at EMG_API_URL: /predict_file
-#   returns { "result": 0 or 1 }  (0=NO, 1=YES)
-#
-# Main state machine phases:
-#   idle      → waiting to start a character
-#   key_eeg   → EEG picks keypad key
-#   key_emg   → EMG confirms/rejects key
-#   char_eeg  → EEG picks letter/space/back within the key’s panel
-#   char_emg  → EMG confirms/rejects that character
+# Streamlit UI for Inkling: hybrid EEG + EMG speller
 
 import streamlit as st
 import requests
 from io import BytesIO
+import numpy as np
+import matplotlib.pyplot as plt
+
 
 # ============================================================
-# CONFIG
+# GLOBAL CONFIG AND STYLING
 # ============================================================
 
 EEG_API_URL = "http://localhost:8000/predict"
 EMG_API_URL = "http://localhost:8001/predict_file"
 
-# Wrapper to support both new and older Streamlit versions
+
 def rerun():
     try:
         st.rerun()
     except AttributeError:
         st.experimental_rerun()
+
+def inject_css():
+    css = """
+    <style>
+    /* Import fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=Montserrat:wght@400;500;600&display=swap');
+
+    /* Global body styling (avoid [class*="css"]) */
+    body {
+        background-color: #F2EDBD !important;
+        font-family: 'Inter', sans-serif;
+        color: #6C2C25;
+    }
+
+    /* Default headings */
+    h1, h2, h3, h4 {
+        font-family: 'Playfair Display', serif !important;
+        font-weight: 600;
+        color: #6C2C25 !important;
+        letter-spacing: 0.5px;
+    }
+
+    .section-label {
+        font-family: 'Montserrat', sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        color: #7CA2E0;
+        font-size: 0.75rem;
+        margin-bottom: -0.5rem;
+        display: block;
+    }
+
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2rem;
+        border-bottom: 2px solid rgba(108,44,37,0.2);
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        color: #6C2C25 !important;
+        font-family: 'Montserrat', sans-serif;
+        text-transform: uppercase;
+        font-size: 0.9rem;
+        letter-spacing: 0.12em;
+        padding-bottom: 0.5rem;
+    }
+
+    .stTabs [aria-selected="true"] {
+        color: #EB5E3A !important;
+        border-bottom: 2px solid #EB5E3A !important;
+    }
+
+    /* Hero section */
+    .inkling-hero {
+        margin-top: 1.5rem;
+        margin-bottom: 2rem;
+        padding: 1.5rem 2rem;
+        border-radius: 18px;
+        background: #F8F3D8;
+        border: 1px solid rgba(108,44,37,0.18);
+        box-shadow: 0 12px 26px rgba(0,0,0,0.06);
+    }
+
+    .inkling-hero-kicker {
+        font-family: 'Montserrat', sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        font-size: 0.75rem;
+        color: #7CA2E0;
+        margin-bottom: 0.4rem;
+    }
+
+    .inkling-hero-title {
+        font-family: 'Playfair Display', serif;
+        font-size: 3rem;
+        line-height: 1.1;
+        color: #6C2C25;
+        margin-bottom: 0.4rem;
+    }
+
+    .inkling-hero-subtitle {
+        font-family: 'Inter', sans-serif;
+        font-size: 0.98rem;
+        line-height: 1.5;
+        color: #6C2C25;
+        max-width: 600px;
+        margin-bottom: 0.9rem;
+    }
+
+    .inkling-hero-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+    }
+
+    .inkling-pill {
+        font-family: 'Montserrat', sans-serif;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        padding: 0.25rem 0.7rem;
+        border-radius: 999px;
+        border: 1px solid rgba(108,44,37,0.28);
+        background: #FFFFFFA8;
+    }
+
+    /* Cards */
+    .inkling-card, .inkling-team-card {
+        background: #FFFFFF;
+        border-radius: 16px;
+        padding: 1.8rem 2rem;
+        border: 1px solid rgba(108,44,37,0.15);
+        box-shadow: 0 10px 24px rgba(0,0,0,0.08);
+        transition: transform 0.25s ease;
+        margin-top: 1rem;
+    }
+
+    .inkling-card:hover, .inkling-team-card:hover {
+        transform: translateY(-4px);
+    }
+
+    /* Team section */
+    .inkling-team-role {
+        font-family: 'Montserrat', sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        font-size: 0.75rem;
+        color: #7CA2E0;
+        margin-bottom: 0.2rem;
+    }
+
+    .inkling-team-name {
+        font-family: 'Playfair Display', serif;
+        font-size: 1.4rem;
+        margin-bottom: 0.25rem;
+        color: #6C2C25;
+    }
+
+    .inkling-team-contact {
+        font-family: 'Inter', sans-serif;
+        font-size: 0.85rem;
+        color: #6C2C25;
+        margin-bottom: 0.6rem;
+        opacity: 0.8;
+    }
+
+    .inkling-team-body {
+        font-family: 'Inter', sans-serif;
+        font-size: 0.95rem;
+        line-height: 1.5;
+        color: #6C2C25;
+    }
+
+    /* Buttons */
+    .stButton>button {
+        background-color: #EB5E3A !important;
+        color: white !important;
+        border-radius: 6px;
+        padding: 0.5rem 1.4rem;
+        font-family: 'Montserrat';
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        border: none;
+    }
+
+    .stButton>button:hover {
+        background-color: #c74928 !important;
+    }
+
+    /* Text areas */
+    textarea {
+        background: #FFFFFF !important;
+        border-radius: 8px !important;
+        border: 1px solid rgba(108,44,37,0.2) !important;
+        color: #6C2C25 !important;
+    }
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
+
+
+
+# ============================================================
+# VISUAL DEMOS AND EXPLAINERS
+# ============================================================
+
+def render_ssvep_demo():
+    st.markdown("#### SSVEP illustration")
+
+    with st.container():
+        col_ctrl, col_plot = st.columns([1, 2])
+
+        with col_ctrl:
+            freq = st.slider("Flicker frequency (Hz)", min_value=5, max_value=20, value=12)
+            duration = st.slider("Window length (seconds)", 1.0, 3.0, 1.0, step=0.5)
+            fs = 250
+            noise_level = st.slider(
+                "Noise level", min_value=0.0, max_value=1.0, value=0.3, step=0.1
+            )
+
+            t = np.arange(0, duration, 1.0 / fs)
+            signal = np.sin(2 * np.pi * freq * t) + noise_level * np.random.randn(len(t))
+
+        with col_plot:
+            st.markdown("Time domain")
+
+            with st.container():
+                plt.figure()
+                fig_time, ax_time = plt.subplots()
+                ax_time.plot(t, signal)
+                ax_time.set_xlabel("Time (s)")
+                ax_time.set_ylabel("Amplitude")
+                ax_time.set_xlim(0, min(duration, 1.0))
+                st.pyplot(fig_time)
+
+            st.markdown("Frequency domain")
+
+            n = len(signal)
+            freqs = np.fft.rfftfreq(n, d=1.0 / fs)
+            spectrum = np.abs(np.fft.rfft(signal)) ** 2
+
+            with st.container():
+                fig_freq, ax_freq = plt.subplots()
+                ax_freq.plot(freqs, spectrum)
+                ax_freq.set_xlabel("Frequency (Hz)")
+                ax_freq.set_ylabel("Power")
+                ax_freq.set_xlim(0, 40)
+                st.pyplot(fig_freq)
+
+    st.markdown(
+        "The peak in the spectrum approximates the flicker frequency the signal is locked to."
+    )
+
+
+def render_state_machine_diagram():
+    st.markdown("#### Control state machine")
+
+    dot = r"""
+digraph {
+    rankdir=LR;
+    node [shape=box];
+
+    idle      [label="idle\nwaiting for next character"];
+    key_eeg   [label="key_eeg\nEEG proposes keypad key"];
+    key_emg   [label="key_emg\nEMG confirms or rejects key"];
+    char_eeg  [label="char_eeg\nEEG proposes letter"];
+    char_emg  [label="char_emg\nEMG confirms or rejects letter"];
+
+    idle     -> key_eeg   [label="start"];
+    key_eeg  -> key_emg   [label="EEG key"];
+    key_emg  -> char_eeg  [label="confirm"];
+    key_emg  -> idle      [label="reject"];
+
+    char_eeg -> char_emg  [label="EEG letter"];
+    char_emg -> idle      [label="confirm or cancel"];
+    char_emg -> char_eeg  [label="reject"];
+}
+"""
+    st.graphviz_chart(dot)
+    st.markdown(
+        "Each transition corresponds to a combination of EEG evidence and EMG decision."
+    )
+
+
+def render_inkling_explainer():
+    st.markdown("## How Inkling works")
+
+    st.markdown(
+        """
+Inkling is a hybrid brain–muscle speller.
+
+EEG is used to infer which visual pattern the user is attending to.
+EMG is used to decide what to do with that option: confirm, delete, cancel, or ignore.
+
+The aim is to allow typing with only brief, deliberate muscle bursts.
+"""
+    )
+
+    st.divider()
+    st.markdown("### Brain signals: EEG and SSVEP")
+
+    tab_overview, tab_model = st.tabs(
+        ["Flicker and visual response", "What the EEG model computes"]
+    )
+
+    with tab_overview:
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown(
+                """
+On the display, twelve blocks flicker with distinct frequencies and phases.
+Each block contains three letters, producing a 36-letter layout.
+
+When a user fixates one block, the visual cortex oscillates at that block’s flicker pattern.
+This is a steady-state visual evoked potential, measurable over occipital and parietal electrodes.
+"""
+            )
+
+        with col2:
+            st.markdown(
+                """
+In the first stage, the system attempts to identify which of the twelve flickers dominates the response.
+
+In the second stage, only the three letters inside the chosen block matter.
+They then flicker in three distinct ways, allowing the EEG model to separate them.
+"""
+            )
+
+    with tab_model:
+        col3, col4 = st.columns([2, 1])
+
+        with col3:
+            st.markdown(
+                """
+The EEG model receives short windows of multi-channel occipital and parietal data.
+
+A convolutional network outputs:
+twelve probabilities during block selection,
+and three probabilities during letter selection.
+
+The highest-probability option is treated as the current candidate when confidence is sufficient.
+"""
+            )
+
+        with col4:
+            st.markdown(
+                """
+Conceptual flow:
+
+Input: EEG time series
+Feature extraction: temporal and spatial filters
+Output: probability distribution over the active flicker set
+"""
+            )
+
+    st.markdown(
+        """
+Inkling is not reading thoughts.
+It is identifying which external flicker pattern the visual cortex is currently phase-locked to.
+"""
+    )
+
+    st.markdown("### SSVEP demo")
+    with st.container():
+        st.markdown('<div class="inkling-demo-frame">', unsafe_allow_html=True)
+        render_ssvep_demo()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.divider()
+    st.markdown("### Muscle signals: EMG and intention bursts")
+
+    tab_emg_overview, tab_emg_mapping = st.tabs(
+        ["Detecting bursts", "Mapping bursts to actions"]
+    )
+
+    with tab_emg_overview:
+        col5, col6 = st.columns(2)
+
+        with col5:
+            st.markdown(
+                """
+Many individuals with severe motor impairment retain small, controllable contractions in at least one muscle.
+
+Inkling records surface EMG from such a site:
+two electrodes over the muscle, rectified signal, smoothed amplitude envelope.
+"""
+            )
+
+        with col6:
+            st.markdown(
+                """
+A simple classifier distinguishes:
+rest, single burst, and double burst.
+
+Single bursts are short, intentional twitches.
+Double bursts are two twitches close together.
+This requires minimal muscle strength, only reliability.
+"""
+            )
+
+    with tab_emg_mapping:
+        st.markdown(
+            """
+EMG states are translated into discrete control signals:
+
+Single burst → confirm the current candidate
+Double burst → delete the last character
+Optional extra pattern → cancel and return
+No burst → hold state
+
+EMG does not select letters.
+It confirms, rejects, or cancels what the EEG system proposes.
+"""
+        )
+
+    st.divider()
+    st.markdown("### Control loop: EEG proposals and EMG decisions")
+
+    col7, col8 = st.columns(2)
+
+    with col7:
+        st.markdown(
+            """
+Block stage
+
+1. EEG estimates which of twelve blocks is attended.
+2. The interface highlights that block.
+3. An EMG confirm locks it in and moves the system to the letter stage.
+"""
+        )
+
+        st.markdown(
+            """
+Letter stage
+
+1. EEG estimates which of the three letters is attended.
+2. The interface highlights that letter.
+3. EMG:
+   confirm → append letter to text
+   delete → remove the previous letter
+   cancel → return to block selection
+"""
+        )
+
+    with col8:
+        st.markdown(
+            """
+Simplified logic:
+
+while typing:
+    eeg_choice = argmax p(option | EEG)
+    if confidence is high:
+        highlight(eeg_choice)
+
+    emg = classify(EMG)
+    if emg == CONFIRM:
+        commit(eeg_choice)
+    elif emg == DELETE:
+        delete_last()
+    elif emg == CANCEL:
+        go_back()
+
+No action is committed without both a reliable EEG signal and an explicit EMG confirmation.
+"""
+        )
+
+    render_state_machine_diagram()
+
+    st.divider()
+    st.markdown("### Why combine EEG and EMG")
+
+    col9, col10 = st.columns(2)
+
+    with col9:
+        st.markdown(
+            """
+EEG alone
+
+Can reach high information rates,
+but requires constant visual focus on flickering targets
+and can become tiring over long periods.
+"""
+        )
+
+    with col10:
+        st.markdown(
+            """
+EMG alone
+
+Works well with strong, stable contractions.
+Becomes difficult with tremor, dystonia, or very weak muscles.
+Continuous EMG control can be tiring.
+"""
+        )
+
+    st.markdown(
+        """
+The hybrid design separates roles.
+
+EEG manages continuous selection of block and letter.
+EMG performs short, decisive actions.
+
+This division reduces fatigue and is designed for people who have very limited,
+but reliable, motor output.
+"""
+    )
+
+
+def render_meet_the_team():
+    st.markdown("## Meet the team")
+
+    st.markdown(
+        """
+Inkling is being developed by a small interdisciplinary group with backgrounds in neuroscience,
+engineering, data science, and applied machine learning.
+"""
+    )
+
+    st.divider()
+
+    # Hildelith
+    st.markdown('<div class="inkling-team-card">', unsafe_allow_html=True)
+    st.markdown('<div class="inkling-team-role">Project leader</div>', unsafe_allow_html=True)
+    st.markdown('<div class="inkling-team-name">Hildelith Frances Leyser</div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+<div class="inkling-team-body">
+I am a neuroscience PhD student at McGill University. At the RIKEN Center for Brain Science
+and the Montreal Neurological Institute I work on decision-making and sensory-motor
+datasets and I build real-time analysis pipelines. I have practical experience with EEG, EMG,
+eye tracking, kinematic tracking, and autonomic measures. I have designed and run
+behavioural and neural experiments with both humans and non-human primates. I
+regularly produce clear documentation and reproducible code for students and
+collaborators.
+
+This background prepares me to lead the design and implementation of the
+hybrid EEG and EMG speller and to release it in a way that others can understand
+and use. I have also developed neurotechnology prototypes during research
+hackathons, including an EEG synchrony system, an EMG-driven regulation game, and a
+VR-based cognitive task. These projects required hardware integration, Python signal
+processing, and rapid system building.
+
+As the senior advisor for the McGill Biomechanics society I helped build an EMG-based
+wearable prototype for a Parkinson's exoskeleton in collaboration with clinics
+during 2023–2024 and I am a clinic volunteer for Parkinson's awareness.
+These issues are close to my heart and I have worked with them in the lab, in the clinic,
+and in my family.
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # Tanya
+    st.markdown('<div class="inkling-team-card">', unsafe_allow_html=True)
+    st.markdown('<div class="inkling-team-role">Team member</div>', unsafe_allow_html=True)
+    st.markdown('<div class="inkling-team-name">Tanya Saha Gupta</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="inkling-team-contact">Contact: tanyasahagupta@gmail.com · +44 7800 648047</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+<div class="inkling-team-body">
+I have an interdisciplinary background spanning biological science, quantitative analysis,
+and applied machine learning. I hold a degree in Biochemistry from Imperial College
+London, where my academic work required rigorous engagement with human physiology,
+signal interpretation, and experimental data.
+
+Professionally, I worked in an analytical role in investment banking, building and
+stress-testing quantitative models under real-world constraints, before founding and
+engineering a retail-technology startup where I developed a Shopify app.
+Most recently, I have been deepening my technical training in machine
+learning and statistical modelling.
+
+This combination of physiological understanding, quantitative reasoning, and practical
+machine learning implementation motivates my interest in working with EEG and EMG
+signals using BCI headgear.
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # Zaki
+    st.markdown('<div class="inkling-team-card">', unsafe_allow_html=True)
+    st.markdown('<div class="inkling-team-role">Team member</div>', unsafe_allow_html=True)
+    st.markdown('<div class="inkling-team-name">Zaki Baalwaan</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="inkling-team-contact">Contact: +44 7454 812223 · zaki_b98@hotmail.co.uk</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+<div class="inkling-team-body">
+I hold a master in Engineering and I am currently an Assistant Engineer with experience
+primarily in the structures team for Project Centre, where I contribute to the design,
+analysis, and maintenance of highway structures, ensuring safety and compliance with
+industry standards.
+
+I also have a background in data science and applied machine learning, with
+experience working on signal-processing projects that involve cleaning, transforming,
+and modelling complex time-series data. I am proficient in Python, using libraries such as
+NumPy, SciPy, MNE, and scikit-learn for statistical analysis and feature extraction, and I
+have worked with biometrics-related datasets that required careful noise
+reduction and interpretation.
+
+My academic and project experience has given me an understanding of neural data
+characteristics, experimental design, and ethical handling of sensitive information.
+Access to the BCI headgear would enable me to apply these skills to real-world neural
+signals and to extend both the project and my technical expertise.
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # Rayan
+    st.markdown('<div class="inkling-team-card">', unsafe_allow_html=True)
+    st.markdown('<div class="inkling-team-role">Team member</div>', unsafe_allow_html=True)
+    st.markdown('<div class="inkling-team-name">Rayan Hasan</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="inkling-team-contact">Contact: +1 365 292 5250 · rayan@dada.com.pk</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+<div class="inkling-team-body">
+I completed my undergraduate degree at the University of Toronto in Organizational
+Management and Human Geography, a program that strengthened my analytical, research,
+and problem-solving abilities.
+
+Previously, I worked with Nestlé on a project focused on digitizing record-keeping systems
+for small dairy farms, which exposed me to technology adoption, data organization, and
+field-level operational challenges. I am also completing the Le Wagon Data Science and
+Deep Learning Bootcamp, where I have developed practical skills in machine learning,
+signal processing, and model development.
+
+These academic and technical experiences support my interest in working with BCI
+headgear and ensure that I can approach its use with responsibility, rigour, and a strong
+understanding of data-driven methodologies.
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
 
 # ============================================================
 # KEYPAD + LETTER MAPPING
@@ -53,30 +678,24 @@ LETTER_MAP = {
     "7": ["P", "Q", "R", "S"],
     "8": ["T", "U", "V"],
     "9": ["W", "X", "Y", "Z"],
-    "0": [" "],      # space handled specially in the panel
+    "0": [" "],
     "*": [],
     "#": [],
 }
 
-# For letter panels we restrict to specific 12-class IDs used during
-# stimulation (same idea as your PsychoPy LETTER_CLASS_IDS).
-#
-# These are the global 12-class indices (0..11) that are active in each panel.
 LETTER_CLASS_IDS = {
-    "1": [0],                 # no letters, but included for completeness
+    "1": [0],
     "*": [0],
     "#": [0],
-
-    "0": [0, 1, 2],           # 0, space, back
-
-    "2": [0, 1, 2, 3],        # 2 + A,B,C
-    "3": [4, 5, 6, 7],        # 3 + D,E,F
-    "4": [8, 9, 10, 11],      # 4 + G,H,I
-    "5": [0, 1, 2, 4],        # 5 + J,K,L
-    "6": [5, 6, 7, 8],        # 6 + M,N,O
-    "7": [9, 10, 11, 0, 1],   # 7 + P,Q,R,S
-    "8": [2, 3, 4, 5],        # 8 + T,U,V
-    "9": [6, 7, 8, 9, 10],    # 9 + W,X,Y,Z
+    "0": [0, 1, 2],
+    "2": [0, 1, 2, 3],
+    "3": [4, 5, 6, 7],
+    "4": [8, 9, 10, 11],
+    "5": [0, 1, 2, 4],
+    "6": [5, 6, 7, 8],
+    "7": [9, 10, 11, 0, 1],
+    "8": [2, 3, 4, 5],
+    "9": [6, 7, 8, 9, 10],
 }
 
 
@@ -85,19 +704,13 @@ LETTER_CLASS_IDS = {
 # ============================================================
 
 def build_letter_panel(key: str) -> list[str]:
-    """
-    Return the panel items for a given key.
-    Must align in order with the LETTER_CLASS_IDS[key] subset we use.
-    """
     if key == "0":
-        # [0, " ", "<BACK>"]
         return ["0", " ", "<BACK>"]
 
     letters = LETTER_MAP.get(key, [])
     if letters:
         return [key] + letters
 
-    # keys with no letters (1, *, #)
     return [key]
 
 
@@ -113,11 +726,7 @@ def pretty_item(x: str) -> str:
 # EEG / EMG API CALLS
 # ============================================================
 
-def call_eeg_api(eeg_bytes: bytes, block_idx: int, trial_idx: int, target_idx: int) -> int | None:
-    """
-    Call EEG FastAPI: /predict
-    Expects JSON with key 'prediction' ∈ {0..11}.
-    """
+def call_eeg_api(eeg_bytes: bytes, block_idx: int, trial_idx: int, target_idx: int):
     files = {
         "file": ("eeg.mat", BytesIO(eeg_bytes), "application/octet-stream")
     }
@@ -139,14 +748,11 @@ def call_eeg_api(eeg_bytes: bytes, block_idx: int, trial_idx: int, target_idx: i
     if pred is None:
         st.error(f"EEG API response missing 'prediction': {out}")
         return None
+
     return int(pred)
 
 
-def call_emg_api(emg_bytes: bytes, dataset_name: str = "0") -> int | None:
-    """
-    Call EMG FastAPI: /predict_file
-    Expects JSON with 'result' ∈ {0,1}.
-    """
+def call_emg_api(emg_bytes: bytes, dataset_name: str = "0"):
     files = {
         "file": ("emg.hdf5", BytesIO(emg_bytes), "application/octet-stream")
     }
@@ -164,6 +770,7 @@ def call_emg_api(emg_bytes: bytes, dataset_name: str = "0") -> int | None:
     if result is None:
         st.error(f"EMG API response missing 'result': {out}")
         return None
+
     return int(result)
 
 
@@ -174,9 +781,9 @@ def call_emg_api(emg_bytes: bytes, dataset_name: str = "0") -> int | None:
 def init_state():
     defaults = {
         "typed_text": "",
-        "phase": "idle",              # idle | key_eeg | key_emg | char_eeg | char_emg
+        "phase": "idle",
         "current_key": None,
-        "current_panel_items": None,  # list[str]
+        "current_panel_items": None,
         "current_candidate_char": None,
         "last_message": "",
         "eeg_file_bytes": None,
@@ -200,12 +807,12 @@ def reset_for_next_char():
 # ============================================================
 
 def show_typed_text():
-    st.markdown("### Typed output")
-    st.text_area("Output", st.session_state.typed_text, height=80, disabled=True)
+    st.markdown("### Output text")
+    st.text_area("Typed text", st.session_state.typed_text, height=90, disabled=True)
 
 
 def sidebar_inputs():
-    st.sidebar.header("EEG / EMG inputs")
+    st.sidebar.header("EEG and EMG inputs")
 
     eeg_file = st.sidebar.file_uploader("EEG .mat file", type=["mat"])
     if eeg_file is not None:
@@ -215,7 +822,7 @@ def sidebar_inputs():
     if emg_file is not None:
         st.session_state.emg_file_bytes = emg_file.read()
 
-    st.sidebar.markdown("**EEG epoch indices** (demo/testing)")
+    st.sidebar.markdown("EEG epoch indices")
     block_idx = st.sidebar.number_input("block_idx", min_value=0, value=0, step=1)
     trial_idx = st.sidebar.number_input("trial_idx", min_value=0, value=0, step=1)
     target_idx = st.sidebar.number_input("target_idx", min_value=0, value=0, step=1)
@@ -231,45 +838,41 @@ def sidebar_inputs():
 
 
 # ============================================================
-# MAIN APP
+# SPELLER UI (LANDING TAB)
 # ============================================================
 
-def main():
-    st.set_page_config(page_title="EEG+EMG Nokia Speller", layout="centered")
-    init_state()
-
-    st.title("📱 EEG + EMG Nokia-style BCI Speller")
-    st.caption("EEG selects keys & letters; EMG confirms YES/NO.")
-
+def render_speller_ui():
     params = sidebar_inputs()
 
+    st.markdown('<div class="inkling-card">', unsafe_allow_html=True)
+    st.markdown("### Run the speller")
     show_typed_text()
     st.write("---")
 
-    st.write(f"**State:** `{st.session_state.phase}`")
+    st.write(f"State: {st.session_state.phase}")
     if st.session_state.last_message:
         st.info(st.session_state.last_message)
 
-    # ---------------------- IDLE ----------------------
+    # idle
     if st.session_state.phase == "idle":
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("Start selecting next character (EEG key)"):
+            if st.button("Start next character (EEG)"):
                 if st.session_state.eeg_file_bytes is None:
-                    st.error("Upload an EEG .mat file first (sidebar).")
+                    st.error("Upload an EEG .mat file first.")
                 else:
                     st.session_state.phase = "key_eeg"
-                    st.session_state.last_message = "Running EEG model to select a keypad key..."
+                    st.session_state.last_message = "Running EEG model to select a key."
                     rerun()
         with col2:
-            if st.button("Clear all text"):
+            if st.button("Clear text"):
                 st.session_state.typed_text = ""
                 reset_for_next_char()
                 rerun()
 
-    # ---------------------- KEY EEG ----------------------
+    # key EEG
     if st.session_state.phase == "key_eeg":
-        if st.button("Run EEG → predict key"):
+        if st.button("Run EEG to predict key"):
             if st.session_state.eeg_file_bytes is None:
                 st.error("No EEG file uploaded.")
             else:
@@ -289,20 +892,22 @@ def main():
                 key = KEYPAD_LABELS[pred_class]
                 st.session_state.current_key = key
                 st.session_state.phase = "key_emg"
-                st.session_state.last_message = f"EEG suggests key `{key}`. Use EMG to confirm?"
+                st.session_state.last_message = (
+                    f"EEG suggests key {key}. Awaiting EMG confirmation."
+                )
                 rerun()
 
     if st.session_state.current_key is not None:
-        st.markdown(f"**Current key candidate:** `{st.session_state.current_key}`")
+        st.markdown(f"Current key candidate: {st.session_state.current_key}")
 
-    # ---------------------- KEY EMG ----------------------
+    # key EMG
     if st.session_state.phase == "key_emg":
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            if st.button("Run EMG confirm (key)"):
+            if st.button("EMG confirm key"):
                 if st.session_state.emg_file_bytes is None:
-                    st.error("Upload an EMG .hdf5 file first (sidebar).")
+                    st.error("Upload an EMG .hdf5 file first.")
                 else:
                     emg_result = call_emg_api(
                         st.session_state.emg_file_bytes,
@@ -314,32 +919,28 @@ def main():
                     key = st.session_state.current_key
 
                     if emg_result == 1:
-                        # YES to key
-                        st.session_state.last_message = f"EMG confirmed key `{key}`."
+                        st.session_state.last_message = f"EMG confirmed key {key}."
 
                         letters = LETTER_MAP.get(key, [])
-                        # If no letters and not 0 → just append key directly
                         if (not letters and key != "0") or key in ["1", "*", "#"]:
                             st.session_state.typed_text += key
                             reset_for_next_char()
                         else:
-                            # Need a letter panel (key has letters or is 0)
                             panel = build_letter_panel(key)
                             st.session_state.current_panel_items = panel
                             st.session_state.phase = "char_eeg"
                             st.session_state.last_message = (
-                                f"Key `{key}` confirmed. EEG now selects from: "
+                                f"Key {key} confirmed. EEG now selecting from: "
                                 + ", ".join(pretty_item(x) for x in panel)
                             )
                     else:
-                        # NO to key → restart character
-                        st.session_state.last_message = "EMG rejected key. Restarting key selection."
+                        st.session_state.last_message = "EMG rejected key. Restarting."
                         reset_for_next_char()
 
                     rerun()
 
         with col2:
-            if st.button("Reject & restart character"):
+            if st.button("Reject and restart key"):
                 reset_for_next_char()
                 rerun()
 
@@ -348,14 +949,13 @@ def main():
                 reset_for_next_char()
                 rerun()
 
-    # Show letter panel if present
     if st.session_state.current_panel_items is not None:
-        st.markdown("**Letter panel options:**")
+        st.markdown("Letter panel:")
         st.write(", ".join(pretty_item(x) for x in st.session_state.current_panel_items))
 
-    # ---------------------- CHAR EEG ----------------------
+    # char EEG
     if st.session_state.phase == "char_eeg":
-        if st.button("Run EEG → predict letter/option"):
+        if st.button("Run EEG to predict letter"):
             if st.session_state.eeg_file_bytes is None:
                 st.error("No EEG file uploaded.")
                 st.stop()
@@ -364,7 +964,7 @@ def main():
             key = st.session_state.current_key
 
             if panel is None or key is None:
-                st.error("Letter panel or key missing.")
+                st.error("Panel or key missing.")
                 st.stop()
 
             pred_class = call_eeg_api(
@@ -381,12 +981,11 @@ def main():
                 st.error(f"No LETTER_CLASS_IDS defined for key {key}.")
                 st.stop()
 
-            # Only consider the first len(panel) IDs as active items
             active_ids = allowed_global_ids[:len(panel)]
             if pred_class not in active_ids:
                 st.error(
                     f"EEG predicted global class {pred_class}, "
-                    f"which is not active in this panel {active_ids}."
+                    f"which is not valid for this panel {active_ids}."
                 )
                 st.stop()
 
@@ -396,23 +995,23 @@ def main():
             st.session_state.current_candidate_char = candidate
             st.session_state.phase = "char_emg"
             st.session_state.last_message = (
-                f"EEG suggests `{pretty_item(candidate)}`. Use EMG to confirm?"
+                f"EEG suggests {pretty_item(candidate)}. Awaiting EMG confirmation."
             )
             rerun()
 
     if st.session_state.current_candidate_char is not None:
         st.markdown(
-            f"**Character candidate:** `{pretty_item(st.session_state.current_candidate_char)}`"
+            f"Character candidate: {pretty_item(st.session_state.current_candidate_char)}"
         )
 
-    # ---------------------- CHAR EMG ----------------------
+    # char EMG
     if st.session_state.phase == "char_emg":
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            if st.button("Run EMG confirm (letter)"):
+            if st.button("EMG confirm letter"):
                 if st.session_state.emg_file_bytes is None:
-                    st.error("Upload an EMG .hdf5 file first (sidebar).")
+                    st.error("Upload an EMG .hdf5 file first.")
                 else:
                     emg_result = call_emg_api(
                         st.session_state.emg_file_bytes,
@@ -424,35 +1023,92 @@ def main():
                     candidate = st.session_state.current_candidate_char
 
                     if emg_result == 1:
-                        # YES to candidate
                         if candidate == "<BACK>":
-                            st.session_state.typed_text = st.session_state.typed_text[:-1]
+                            st.session_state.typed_text = (
+                                st.session_state.typed_text[:-1]
+                            )
                         else:
                             st.session_state.typed_text += candidate
 
                         st.session_state.last_message = (
-                            f"EMG confirmed `{pretty_item(candidate)}`."
+                            f"EMG confirmed {pretty_item(candidate)}"
                         )
                         reset_for_next_char()
+
                     else:
-                        # NO to candidate → re-run char EEG within same key
                         st.session_state.current_candidate_char = None
                         st.session_state.phase = "char_eeg"
                         st.session_state.last_message = (
-                            "EMG rejected character. Re-running EEG for this key."
+                            "EMG rejected letter. Re-running EEG for this key."
                         )
+
                     rerun()
 
         with col2:
-            if st.button("Cancel this character"):
+            if st.button("Cancel letter"):
                 reset_for_next_char()
                 rerun()
 
         with col3:
-            if st.button("Clear all text & restart"):
+            if st.button("Clear all text"):
                 st.session_state.typed_text = ""
                 reset_for_next_char()
                 rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# MAIN ENTRY POINT WITH TABS
+# ============================================================
+
+def main():
+    st.set_page_config(page_title="Inkling EEG + EMG Speller", layout="centered")
+    inject_css()
+    init_state()
+
+    # Hero section
+    st.markdown(
+        """
+        <div class="inkling-hero">
+            <div class="inkling-hero-kicker">
+                Hybrid EEG & EMG communication interface
+            </div>
+            <div class="inkling-hero-title">
+                Inkling
+            </div>
+            <p class="inkling-hero-subtitle">
+                A minimal-movement speller that fuses visual brain rhythms with tiny muscle bursts,
+                designed for contexts where conventional typing and pointing are no longer possible.
+            </p>
+            <div class="inkling-hero-pills">
+                <div class="inkling-pill">SSVEP decoding</div>
+                <div class="inkling-pill">Intent bursts</div>
+                <div class="inkling-pill">Real-time control</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tab_landing, tab_how, tab_team = st.tabs(
+        ["Landing", "How it works", "Meet the team"]
+    )
+
+    with tab_landing:
+        st.markdown(
+            """
+Inkling is an experimental interface that combines brain signals and small muscle
+contractions to allow typing when standard keyboards and pointing devices are not usable.
+"""
+        )
+        render_speller_ui()
+
+    with tab_how:
+        render_inkling_explainer()
+
+    with tab_team:
+        render_meet_the_team()
 
 
 if __name__ == "__main__":
