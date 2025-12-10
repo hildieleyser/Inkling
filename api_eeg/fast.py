@@ -5,10 +5,13 @@ import io
 import os
 import sys
 import importlib
-from typing import Tuple
+import threading
+import time
+from typing import Tuple, Dict, Optional
 
 import numpy as np
 import torch
+import pandas as pd
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from scipy.io import loadmat
 
@@ -19,6 +22,11 @@ from scipy.io import loadmat
 HERE = Path(__file__).resolve().parent          # .../inkling/api_eeg
 PROJECT_ROOT = HERE.parent                      # .../inkling
 
+# OpenBCI recordings folder:
+# e.g. /Users/<user>/Documents/OpenBCI_GUI/Recordings
+RECORDINGS_ROOT = Path.home() / "Documents" / "OpenBCI_GUI" / "Recordings"
+
+EEG_CSV_GLOB = "BrainFlow-RAW_*.csv"  # matches OpenBCI BrainFlow raw exports
 
 def _find_ssvep_package(start: Path) -> Tuple[Path, Path]:
     for root, dirs, files in os.walk(start):
@@ -80,7 +88,7 @@ def load_model(model_path: Path = MODEL_PATH):
 model = load_model()
 
 # ------------------------------------------------------------
-# .mat → single epoch helper
+# .mat → single epoch helper (unchanged)
 # ------------------------------------------------------------
 
 
@@ -174,7 +182,54 @@ def _extract_epoch_from_mat(
 
 
 # ------------------------------------------------------------
-# Endpoints
+# Shared BrainFlow CSV → prediction helper
+# ------------------------------------------------------------
+
+
+def _predict_from_brainflow_df(df: pd.DataFrame, filename: str) -> Dict[str, object]:
+    """
+    Take a BrainFlow RAW dataframe and run it through
+    preprocess_epoch + EEGNet, returning a prediction dict.
+    Raises ValueError on problems.
+    """
+    if df.shape[1] < 2 + N_CHANS:
+        raise ValueError(
+            f"CSV has only {df.shape[1]} columns; expected at least {2 + N_CHANS}"
+        )
+
+    # Typical BrainFlow RAW:
+    #   0: sample index / counter
+    #   1: board meta / reserved
+    #   2..9: EEG channels (8 channels)  <-- we use these
+    data = df.iloc[:, 2:2 + N_CHANS].to_numpy(dtype="float64")  # (T, 8)
+    epoch_raw = data.T  # (8, T)
+
+    if epoch_raw.shape[1] < 660:
+        raise ValueError(
+            f"Not enough samples in CSV ({epoch_raw.shape[1]}); need >= 660"
+        )
+
+    epoch_pp = preprocess_epoch(epoch_raw)  # (8, time)
+
+    if epoch_pp.ndim != 2 or epoch_pp.shape[0] != N_CHANS:
+        raise ValueError(
+            f"Unexpected preprocessed shape {epoch_pp.shape}; expected ({N_CHANS}, T)"
+        )
+
+    x = torch.from_numpy(epoch_pp.astype(np.float32))[None, None, ...].to(DEVICE)
+
+    with torch.no_grad():
+        logits = model(x)
+        pred_class = int(logits.argmax(dim=1).item())
+
+    return {
+        "filename": filename,
+        "prediction": pred_class,
+    }
+
+
+# ------------------------------------------------------------
+# Endpoints: health + original predict
 # ------------------------------------------------------------
 
 
@@ -200,7 +255,6 @@ async def predict(
 
     contents = await file.read()
 
-    # DEBUG (optional): see what indices Streamlit is sending
     print(f"[EEG] indices: block={block_idx}, trial={trial_idx}, target={target_idx}")
 
     try:
@@ -237,6 +291,115 @@ async def predict(
         "target_idx": target_idx,
         "prediction": pred_class,
     }
+
+
+# ------------------------------------------------------------
+# Live EEG prediction: upload + auto-watcher
+# ------------------------------------------------------------
+
+EEG_LABELS: Dict[int, str] = {i: f"class_{i}" for i in range(N_CLASSES)}
+
+LAST_AUTO_PREDICTION: Optional[Dict[str, object]] = None
+
+
+@app.post("/predict_eeg_live")
+async def predict_eeg_live(file: UploadFile = File(...)):
+    """
+    Predict EEG target (12-way) from an uploaded BrainFlow RAW CSV.
+    """
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only .csv files are supported")
+
+    raw_bytes = await file.read()
+
+    try:
+        df = pd.read_csv(io.BytesIO(raw_bytes), sep="\t", header=None)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error reading CSV: {e}")
+
+    print(f"[EEG CSV upload] shape={df.shape}")
+
+    try:
+        result = _predict_from_brainflow_df(df, filename=file.filename)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    result["label"] = EEG_LABELS.get(result["prediction"], "unknown")
+    return result
+
+
+@app.get("/last_auto_prediction")
+async def last_auto_prediction():
+    """
+    Get the last automatic prediction made from the recordings watcher.
+    """
+    if LAST_AUTO_PREDICTION is None:
+        raise HTTPException(status_code=404, detail="No automatic prediction yet.")
+    return LAST_AUTO_PREDICTION
+
+
+# ------------------------------------------------------------
+# Background watcher: automatically predict latest OpenBCI CSV
+# ------------------------------------------------------------
+
+
+def _watch_recordings_folder():
+    """
+    Background thread: poll the OpenBCI recordings folder for new BrainFlow-RAW_*.csv
+    When a new one appears (after 'Stop Recording'), run prediction automatically.
+    """
+    global LAST_AUTO_PREDICTION
+
+    seen: set[Path] = set()
+
+    while True:
+        try:
+            if not RECORDINGS_ROOT.exists():
+                time.sleep(2.0)
+                continue
+
+            # Find all matching BrainFlow CSVs
+            csv_files = list(RECORDINGS_ROOT.rglob(EEG_CSV_GLOB))
+            if not csv_files:
+                time.sleep(2.0)
+                continue
+
+            latest_path: Path = max(csv_files, key=lambda p: p.stat().st_mtime)
+
+            if latest_path not in seen:
+                # Wait a bit to ensure file is fully written
+                time.sleep(1.0)
+                print(f"[AUTO EEG] New CSV detected: {latest_path}")
+
+                try:
+                    with latest_path.open("rb") as f:
+                        raw_bytes = f.read()
+                    df = pd.read_csv(io.BytesIO(raw_bytes), sep="\t", header=None)
+                    print(f"[AUTO EEG] CSV shape: {df.shape}")
+
+                    result = _predict_from_brainflow_df(df, filename=str(latest_path))
+                    result["label"] = EEG_LABELS.get(result["prediction"], "unknown")
+                    LAST_AUTO_PREDICTION = result
+
+                    print(f"[AUTO EEG] Prediction: {result}", flush=True)
+                    seen.add(latest_path)
+                except Exception as e:
+                    print(f"[AUTO EEG] Error processing {latest_path}: {e}", flush=True)
+
+        except Exception as e:
+            print(f"[AUTO EEG] Watcher error: {e}", flush=True)
+
+        time.sleep(2.0)
+
+
+@app.on_event("startup")
+def _start_watcher():
+    """
+    Launch the recordings watcher thread when FastAPI starts.
+    """
+    t = threading.Thread(target=_watch_recordings_folder, daemon=True)
+    t.start()
+    print(f"[AUTO EEG] Watcher started on {RECORDINGS_ROOT}")
 
 
 if __name__ == "__main__":
