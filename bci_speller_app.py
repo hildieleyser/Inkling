@@ -70,7 +70,6 @@ def inject_css():
                      "Segoe UI", sans-serif;
     }
 
-    /* Main Streamlit content wrapper */
     .block-container {
         max-width: 980px;
         padding-top: 1.75rem;
@@ -91,7 +90,7 @@ def inject_css():
     }
 
     h1 {
-        font-size: clamp(3.4rem, 6.4vw, 4.6rem);  /* ~61–68 px range */
+        font-size: clamp(3.4rem, 6.4vw, 4.6rem);
         line-height: 1.02;
     }
 
@@ -226,6 +225,7 @@ def inject_css():
         letter-spacing: 0.22em;
         color: #FDF8EE;
         margin-bottom: 0.3rem;
+        white-space: nowrap;  /* keep INKLING on one line */
     }
 
     .inkling-hero-subtitle {
@@ -273,7 +273,7 @@ def inject_css():
     }
 
     /* ------------------------------------------------------------
-       CARDS (PANELS & TEAM)
+       CARDS
        ------------------------------------------------------------ */
 
     .inkling-card,
@@ -303,47 +303,12 @@ def inject_css():
         background-color: var(--inkling-bg-cream-soft);
     }
 
-    .inkling-team-role {
-        font-family: "Lekton", monospace;
-        text-transform: uppercase;
-        letter-spacing: 0.3em;
-        font-size: 0.72rem;
-        color: var(--inkling-blue-soft);
-        margin-bottom: 0.25rem;
-    }
-
-    .inkling-team-name {
-        font-family: "Heading now 61-68", "Aileron", system-ui, sans-serif;
-        text-transform: uppercase;
-        font-weight: 800;
-        letter-spacing: 0.18em;
-        font-size: 1.25rem;
-        margin-bottom: 0.2rem;
-        color: var(--inkling-oxblood);
-    }
-
-    .inkling-team-contact {
-        font-family: "Lekton", monospace;
-        font-size: 0.78rem;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        color: rgba(38,22,18,0.7);
-        margin-bottom: 0.7rem;
-    }
-
-    .inkling-team-body {
-        font-family: "Aileron", system-ui, sans-serif;
-        font-size: 0.93rem;
-        line-height: 1.7;
-        color: var(--inkling-ink);
-    }
-
     /* ------------------------------------------------------------
-       BUTTONS
+       BUTTONS – OXBLOOD, NO GRADIENT
        ------------------------------------------------------------ */
 
     .stButton>button {
-        background: linear-gradient(120deg, var(--inkling-blue) 0%, var(--inkling-blue-soft) 50%, var(--inkling-oxblood-soft) 100%) !important;
+        background: var(--inkling-oxblood) !important;
         color: #FDF8EE !important;
         border-radius: 999px;
         padding: 0.45rem 1.7rem;
@@ -363,6 +328,7 @@ def inject_css():
         transform: translateY(-1px);
         filter: brightness(1.03);
         box-shadow: 0 16px 30px rgba(0,0,0,0.32);
+        background: var(--inkling-oxblood-soft) !important;
     }
 
     .stButton>button:active {
@@ -440,28 +406,24 @@ def render_ssvep_demo():
 
         with col_plot:
             st.markdown("Time domain")
-
-            with st.container():
-                fig_time, ax_time = plt.subplots()
-                ax_time.plot(t, signal)
-                ax_time.set_xlabel("Time (s)")
-                ax_time.set_ylabel("Amplitude")
-                ax_time.set_xlim(0, min(duration, 1.0))
-                st.pyplot(fig_time)
+            fig_time, ax_time = plt.subplots()
+            ax_time.plot(t, signal)
+            ax_time.set_xlabel("Time (s)")
+            ax_time.set_ylabel("Amplitude")
+            ax_time.set_xlim(0, min(duration, 1.0))
+            st.pyplot(fig_time)
 
             st.markdown("Frequency domain")
-
             n = len(signal)
             freqs = np.fft.rfftfreq(n, d=1.0 / fs)
             spectrum = np.abs(np.fft.rfft(signal)) ** 2
 
-            with st.container():
-                fig_freq, ax_freq = plt.subplots()
-                ax_freq.plot(freqs, spectrum)
-                ax_freq.set_xlabel("Frequency (Hz)")
-                ax_freq.set_ylabel("Power")
-                ax_freq.set_xlim(0, 40)
-                st.pyplot(fig_freq)
+            fig_freq, ax_freq = plt.subplots()
+            ax_freq.plot(freqs, spectrum)
+            ax_freq.set_xlabel("Frequency (Hz)")
+            ax_freq.set_ylabel("Power")
+            ax_freq.set_xlim(0, 40)
+            st.pyplot(fig_freq)
 
     st.markdown(
         "The peak in the spectrum approximates the flicker frequency the signal is locked to."
@@ -653,9 +615,9 @@ Letter stage
 1. EEG estimates which of the three letters is attended.
 2. The interface highlights that letter.
 3. EMG:
-   confirm → append letter to text
-   delete → remove the previous letter
-   cancel → return to block selection
+   • confirm → append letter to text
+   • delete → remove the previous letter
+   • cancel → return to block selection
 """
         )
 
@@ -735,6 +697,7 @@ engineering, data science, and applied machine learning.
 
     st.divider()
 
+    # (team cards unchanged – keeping as you had them)
     # Hildelith
     st.markdown('<div class="inkling-team-card">', unsafe_allow_html=True)
     st.markdown('<div class="inkling-team-role">Project leader</div>', unsafe_allow_html=True)
@@ -873,7 +836,6 @@ understanding of data-driven methodologies.
 # KEYPAD + LETTER MAPPING
 # ============================================================
 
-# Stage 1: EEG classes 0–11 map to these 12 keypad entries
 KEYPAD_LABELS = [
     "1", "2", "3",
     "4", "5", "6",
@@ -896,7 +858,6 @@ LETTER_MAP = {
     "#": [],
 }
 
-# Stage 2: local class indices (0..N-1) per key
 LETTER_CLASS_IDS = {
     "1": [0],
     "*": [0],
@@ -1200,22 +1161,18 @@ def render_speller_ui():
                     f"EEG predicted local class {pred_class}, "
                     f"which is not valid for key {key} (allowed {allowed_ids})."
                 )
-                st.stop()
-
-            if pred_class >= len(panel):
+            elif pred_class >= len(panel):
                 st.error(
                     f"EEG predicted local class {pred_class}, "
                     f"but panel only has {len(panel)} options."
                 )
-                st.stop()
-
-            candidate = panel[pred_class]
-
-            st.session_state.current_candidate_char = candidate
-            st.session_state.phase = "char_emg"
-            st.session_state.last_message = (
-                f"EEG suggests {pretty_item(candidate)}. Awaiting EMG confirmation."
-            )
+            else:
+                candidate = panel[pred_class]
+                st.session_state.current_candidate_char = candidate
+                st.session_state.phase = "char_emg"
+                st.session_state.last_message = (
+                    f"EEG suggests {pretty_item(candidate)}. Awaiting EMG confirmation."
+                )
             rerun()
 
     if st.session_state.current_candidate_char is not None:
@@ -1278,20 +1235,34 @@ def render_speller_ui():
 
 
 # ============================================================
-# COOL VIDEO ANIMATION TAB – EEG + EMG FLOW (DUMMY)
+# COOL VIDEO ANIMATION TAB – EEG + EMG FLOW (DUMMY, PLATYPUS)
 # ============================================================
 
 def animate_epoch(epoch_pp: np.ndarray, fs: float, title: str):
     """
-    Animate preprocessed EEG (all channels) over ~5 seconds.
+    Animate preprocessed EEG (all channels) over ~2 seconds.
+
+    - Caps duration at 2.0 s
+    - Uses ~60 frames (so it's not unbearably heavy for Streamlit)
     """
     n_channels, n_samples = epoch_pp.shape
-    n_frames = min(500, n_samples)
+
+    # --- 1) cap to 2 seconds of data ---
+    max_duration = 2.0  # seconds you want per selection
+    max_samples = int(fs * max_duration)
+    n_samples = min(n_samples, max_samples)
+
+    # --- 2) choose a limited number of frames ---
+    n_frames = 60  # ~60 FPS for 2 seconds → ~0.033 s per frame
+    frame_indices = np.linspace(1, n_samples, n_frames, dtype=int)
 
     st.markdown(f"##### {title}")
     plot_placeholder = st.empty()
 
-    for t_idx in range(1, n_frames + 1):
+    # time per frame so whole loop ≈ max_duration
+    sleep_per_frame = max_duration / n_frames  # e.g. 2 / 60 ≈ 0.033 s
+
+    for t_idx in frame_indices:
         data = epoch_pp[:, :t_idx]
         time_axis = np.arange(t_idx) / fs
 
@@ -1305,7 +1276,8 @@ def animate_epoch(epoch_pp: np.ndarray, fs: float, title: str):
         fig.tight_layout()
 
         plot_placeholder.pyplot(fig)
-        time.sleep(0.01)
+        time.sleep(sleep_per_frame)
+
 
 
 def show_selection_card(label: str, value: str):
@@ -1383,42 +1355,85 @@ def show_emg_confirmation(text: str):
     )
 
 
+def _find_key_for_letter(letter: str) -> str | None:
+    for k, letters in LETTER_MAP.items():
+        if letter in letters:
+            return k
+    return None
+
+
 def render_demo_tab():
     """
-    Sequential animation with dummy data:
-    1. EEG for key '4' (dummy), then show 4
-    2. EMG confirms
-    3. EEG for letter 'H' (dummy), then show H
-    4. EMG confirms
+    Sequential animation with dummy data, spelling a hidden word (PLATYPUS),
+    but without revealing it up-front in the UI copy.
     """
     st.markdown('<div class="inkling-card">', unsafe_allow_html=True)
-    st.markdown("### Demo: EEG + EMG flow (dummy data)")
+    st.markdown("### Demo: live EEG + EMG decoding (simulated)")
 
     st.markdown(
         """
-This sequence shows the *intended* interaction visually:
+This tab replays a single simulated run of the speller.
 
-1. Preprocessed EEG for the **number 4** on the Nokia keypad
-2. EMG confirmation that the key selection is correct
-3. Preprocessed EEG for the **letter H** within that key
-4. EMG confirmation that the letter selection is correct
+You’ll see:
+
+- multi-channel preprocessed EEG epochs
+- a proposed keypad key
+- a short EMG “yes” burst
+- then a refined letter choice
+
+The decoded text builds up character by character, as it would in a real session.
 """
     )
 
-    if st.button("Play demo sequence"):
-        epoch_key4 = np.random.randn(8, 500)
-        animate_epoch(epoch_key4, FS, "EEG · selecting keypad number 4")
-        show_selection_card("Key selected", "4")
-        time.sleep(1.0)
-        show_emg_confirmation("key 4")
+    if st.button("Start demo run"):
+        hidden_word = "PLATYPUS"
+        typed = ""
+        typed_placeholder = st.empty()
 
-        st.markdown("---")
+        for letter in hidden_word:
+            key = _find_key_for_letter(letter)
+            if key is None:
+                continue
 
-        epoch_H = np.random.randn(8, 500)
-        animate_epoch(epoch_H, FS, "EEG · selecting letter H")
-        show_selection_card("Letter selected", "H")
-        time.sleep(1.0)
-        show_emg_confirmation("letter H")
+            # KEY EEG
+            epoch_key = np.random.randn(8, 500)
+            animate_epoch(epoch_key, FS, f"EEG · selecting keypad {key}")
+            show_selection_card("Key selected", key)
+            time.sleep(0.6)
+            show_emg_confirmation("key")
+            st.markdown("---")
+
+            # LETTER EEG
+            epoch_letter = np.random.randn(8, 500)
+            animate_epoch(epoch_letter, FS, "EEG · refining to letter")
+            show_selection_card("Letter selected", letter)
+            time.sleep(0.6)
+            show_emg_confirmation("letter")
+
+            typed += letter
+            typed_placeholder.markdown(
+                f"""
+                <div style="
+                    margin-top: 18px;
+                    font-family: 'Lekton', monospace;
+                    font-size: 0.85rem;
+                    letter-spacing: 0.22em;
+                    text-transform: uppercase;
+                    color: #471512;
+                ">
+                    Decoded so far ·
+                    <span style="
+                        font-family: 'Heading now 61-68', 'Aileron', system-ui, sans-serif;
+                        font-size: 1.6rem;
+                        letter-spacing: 0.18em;
+                        margin-left: 0.6rem;
+                    ">{typed}</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            st.markdown("---")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1481,4 +1496,3 @@ contractions to allow typing when standard keyboards and pointing devices are no
 
 if __name__ == "__main__":
     main()
-
