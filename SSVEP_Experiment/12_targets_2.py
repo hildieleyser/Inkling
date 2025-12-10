@@ -6,6 +6,7 @@ import tempfile
 import requests  # for HTTP calls
 import h5py
 from scipy.io import savemat
+import requests  # for HTTP calls
 
 ###########################################
 # CONFIG
@@ -14,6 +15,8 @@ DEBUG_KEYBOARD = False          # keyboard-only control
 USE_SIM_DATA = True             # drive EEG/EMG from simulated data (.npz)
 USE_REAL_MODELS_ON_SIM = False   # if True: NPZ -> FastAPI -> EEGNet/EMG model
 
+DEBUG_KEYBOARD = True       # keyboard-only control
+USE_SIM_DATA = False        # drive EEG/EMG from simulated data when not in DEBUG
 SIM_DATA_PATH = "eeg_emg_helloworld.npz"
 EMG_BURST_THRESH = 0.5      # envelope/percentile cutoff for sim EMG confirm
 STIM_TIME_KEY = 5.0         # seconds of flicker before querying main keypad EEG
@@ -21,14 +24,14 @@ STIM_TIME_LETTER = 5.0      # seconds of flicker before querying letter EEG
 FONT_NAME = "Helvetica"
 
 # Debug overlay: show real flicker frequencies above each box
-SHOW_DEBUG_OVERLAY_DEFAULT = False   # initial state
+SHOW_DEBUG_OVERLAY_DEFAULT = True   # initial state
 _debug_overlay_on = SHOW_DEBUG_OVERLAY_DEFAULT
 
 # FastAPI servers
 EEG_API_URL = "http://127.0.0.1:8000/predict"        # from api_eeg/fast.py
 EMG_API_URL = "http://127.0.0.1:8001/predict_file"   # from api_emg
 
-# File lists for offline testing with REAL data
+# File lists for offline testing (YOU fill these)
 EEG_FILES = [
     r"/Users/rayanhasan/code/hildieleyser/Inkling/S001.mat",  # example
 ]
@@ -155,7 +158,6 @@ def _load_sim_data():
         if os.path.exists(path):
             data = np.load(path)
             _SIM_DATA = {k: data[k] for k in data.files}
-            print(f"[SIM] Loaded NPZ from {path}")
             return _SIM_DATA
     raise FileNotFoundError(f"Simulated data not found. Tried: {candidates}")
 
@@ -178,7 +180,6 @@ def _next_sim_emg():
     return _SIM_DATA["emg"][idx], float(_SIM_DATA["fs_emg"]), label
 
 def _freq_logits_from_signal(sig, fs):
-    """Simple PSD peak picker decoder for 12 SSVEP freqs."""
     f = np.fft.rfft(sig)
     hz = np.fft.rfftfreq(len(sig), 1 / fs)
     mags = []
@@ -302,7 +303,6 @@ def eeg_predict_key():
             if k == "num_add":
                 return KEYPAD_LABELS.index("#")
         return None
-
     active_ids = list(range(12))
     return _eeg_predict_from_subset(active_ids, thresh=EEG_KEY_THRESH)
 
@@ -475,6 +475,7 @@ def run_main_keypad(buffer_text):
     while True:
         t = clock.getTime()
 
+        # allow toggling overlay
         _handle_debug_toggle()
 
         # hard escape
