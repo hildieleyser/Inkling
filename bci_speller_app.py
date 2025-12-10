@@ -1,4 +1,4 @@
-# bci_speller_app.py
+# bci_speller_streamlit.py
 # Streamlit UI for Inkling: hybrid EEG + EMG speller
 
 import streamlit as st
@@ -6,6 +6,7 @@ import requests
 from io import BytesIO
 import numpy as np
 import matplotlib.pyplot as plt
+import time
 
 
 # ============================================================
@@ -14,6 +15,7 @@ import matplotlib.pyplot as plt
 
 EEG_API_URL = "http://localhost:8000/predict"
 EMG_API_URL = "http://localhost:8001/predict_file"
+FS = 250  # demo sampling rate for EEG animation
 
 
 def rerun():
@@ -22,186 +24,397 @@ def rerun():
     except AttributeError:
         st.experimental_rerun()
 
+
 def inject_css():
     css = """
     <style>
-    /* Import fonts */
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=Montserrat:wght@400;500;600&display=swap');
+    /* ------------------------------------------------------------
+       FONT IMPORTS + STACKS
+       ------------------------------------------------------------ */
 
-    /* Global body styling (avoid [class*="css"]) */
-    body {
-        background-color: #F2EDBD !important;
-        font-family: 'Inter', sans-serif;
-        color: #6C2C25;
+    /* Lekton (labels / technical) */
+    @import url('https://fonts.googleapis.com/css2?family=Lekton:wght@400;700&display=swap');
+    /* Aileron (main sans – closest web analogue) */
+    @import url('https://fonts.googleapis.com/css2?family=Aileron:wght@300;400;500;600;800&display=swap');
+    /* Script fallback for Bourgiono Rastelenio */
+    @import url('https://fonts.googleapis.com/css2?family=Pacifico&display=swap');
+
+    :root {
+        /* Refined palette */
+        --inkling-bg-cream: #F4EBDD;
+        --inkling-bg-cream-soft: #F7F0E4;
+        --inkling-panel: #FBF7EF;
+        --inkling-ink: #261612;
+        --inkling-blue: #143D7A;
+        --inkling-blue-soft: #2458A7;
+        --inkling-oxblood: #471512;
+        --inkling-oxblood-soft: #6B2620;
+        --inkling-line-soft: rgba(38,22,18,0.10);
+        --inkling-line-strong: rgba(38,22,18,0.22);
+        --inkling-pill-bg: rgba(244,235,221,0.08);
     }
 
-    /* Default headings */
+    /* ------------------------------------------------------------
+       GLOBAL LAYOUT & BACKGROUND
+       ------------------------------------------------------------ */
+
+    body {
+        margin: 0;
+        padding: 0;
+        background:
+            radial-gradient(circle at 0% 0%, rgba(255,255,255,0.45), transparent 55%),
+            radial-gradient(circle at 100% 100%, rgba(255,255,255,0.35), transparent 55%),
+            linear-gradient(135deg, #F4EBDD 0%, #EFE3D4 45%, #F6EFE5 100%);
+        color: var(--inkling-ink);
+        font-family: "Aileron", system-ui, -apple-system, BlinkMacSystemFont,
+                     "Segoe UI", sans-serif;
+    }
+
+    /* Main Streamlit content wrapper */
+    .block-container {
+        max-width: 980px;
+        padding-top: 1.75rem;
+        padding-bottom: 3rem;
+    }
+
+    /* ------------------------------------------------------------
+       TYPOGRAPHY
+       ------------------------------------------------------------ */
+
     h1, h2, h3, h4 {
-        font-family: 'Playfair Display', serif !important;
-        font-weight: 600;
-        color: #6C2C25 !important;
-        letter-spacing: 0.5px;
+        font-family: "Heading now 61-68", "Aileron", system-ui, sans-serif !important;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        font-weight: 800;
+        color: var(--inkling-oxblood) !important;
+        margin-bottom: 0.2rem;
+    }
+
+    h1 {
+        font-size: clamp(3.4rem, 6.4vw, 4.6rem);  /* ~61–68 px range */
+        line-height: 1.02;
+    }
+
+    h2 {
+        font-size: clamp(2.2rem, 4.4vw, 3rem);
+        line-height: 1.06;
+    }
+
+    h3, h4 {
+        font-size: 1.2rem;
+        line-height: 1.12;
+    }
+
+    p, li {
+        font-family: "Aileron", system-ui, sans-serif;
+        font-size: 0.95rem;
+        line-height: 1.65;
+        color: var(--inkling-ink);
     }
 
     .section-label {
-        font-family: 'Montserrat', sans-serif;
+        font-family: "Lekton", monospace;
         text-transform: uppercase;
-        letter-spacing: 0.18em;
-        color: #7CA2E0;
-        font-size: 0.75rem;
-        margin-bottom: -0.5rem;
-        display: block;
+        letter-spacing: 0.3em;
+        color: var(--inkling-blue-soft);
+        font-size: 0.7rem;
+        margin-bottom: -0.1rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.6rem;
     }
 
-    /* Tabs */
+    .section-label::before {
+        content: "";
+        display: inline-block;
+        width: 26px;
+        height: 1px;
+        background: var(--inkling-blue-soft);
+        opacity: 0.7;
+    }
+
+    .inkling-script {
+        font-family: "Bourgiono Rastelenio", "Pacifico", cursive;
+        font-size: 1.7rem;
+        letter-spacing: 0.06em;
+        color: var(--inkling-oxblood-soft);
+    }
+
+    /* ------------------------------------------------------------
+       TABS
+       ------------------------------------------------------------ */
+
     .stTabs [data-baseweb="tab-list"] {
-        gap: 2rem;
-        border-bottom: 2px solid rgba(108,44,37,0.2);
+        gap: 2.5rem;
+        border-bottom: 1px solid var(--inkling-line-soft);
+        margin-top: 0.8rem;
+        padding-bottom: 0.1rem;
     }
 
     .stTabs [data-baseweb="tab"] {
-        color: #6C2C25 !important;
-        font-family: 'Montserrat', sans-serif;
+        position: relative;
+        color: rgba(38,22,18,0.7) !important;
+        font-family: "Lekton", monospace;
         text-transform: uppercase;
-        font-size: 0.9rem;
-        letter-spacing: 0.12em;
-        padding-bottom: 0.5rem;
+        font-size: 0.78rem;
+        letter-spacing: 0.28em;
+        padding-bottom: 0.7rem;
+        transition: color 160ms ease-out;
+    }
+
+    .stTabs [data-baseweb="tab"]:hover {
+        color: var(--inkling-oxblood-soft) !important;
     }
 
     .stTabs [aria-selected="true"] {
-        color: #EB5E3A !important;
-        border-bottom: 2px solid #EB5E3A !important;
+        color: var(--inkling-blue-soft) !important;
     }
 
-    /* Hero section */
+    .stTabs [aria-selected="true"]::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        bottom: 0.1rem;
+        width: 56%;
+        height: 2px;
+        background: linear-gradient(90deg, var(--inkling-blue-soft), var(--inkling-oxblood-soft));
+    }
+
+    /* ------------------------------------------------------------
+       HERO BAND
+       ------------------------------------------------------------ */
+
     .inkling-hero {
-        margin-top: 1.5rem;
-        margin-bottom: 2rem;
-        padding: 1.5rem 2rem;
-        border-radius: 18px;
-        background: #F8F3D8;
-        border: 1px solid rgba(108,44,37,0.18);
-        box-shadow: 0 12px 26px rgba(0,0,0,0.06);
+        margin-top: 0.5rem;
+        margin-bottom: 2.3rem;
+        padding: 1.9rem 2.2rem;
+        background: radial-gradient(circle at 0% 0%, rgba(244,235,221,0.08), transparent 55%),
+                    radial-gradient(circle at 100% 100%, rgba(255,255,255,0.18), transparent 55%),
+                    linear-gradient(120deg, #163D7B 0%, #12315F 55%, #192442 100%);
+        color: #FDF8EE;
+        border-radius: 20px;
+        border: 1px solid rgba(255,255,255,0.12);
+        box-shadow: 0 26px 50px rgba(4,6,18,0.55);
+        display: grid;
+        grid-template-columns: minmax(0, 2.3fr) minmax(0, 1.4fr);
+        gap: 1.8rem;
+        align-items: center;
+    }
+
+    @media (max-width: 900px) {
+        .inkling-hero {
+            grid-template-columns: 1fr;
+            padding: 1.6rem 1.5rem;
+        }
     }
 
     .inkling-hero-kicker {
-        font-family: 'Montserrat', sans-serif;
+        font-family: "Lekton", monospace;
         text-transform: uppercase;
-        letter-spacing: 0.18em;
-        font-size: 0.75rem;
-        color: #7CA2E0;
-        margin-bottom: 0.4rem;
+        letter-spacing: 0.35em;
+        font-size: 0.68rem;
+        color: rgba(250,245,234,0.9);
+        margin-bottom: 0.55rem;
+        opacity: 0.9;
     }
 
     .inkling-hero-title {
-        font-family: 'Playfair Display', serif;
-        font-size: 3rem;
-        line-height: 1.1;
-        color: #6C2C25;
-        margin-bottom: 0.4rem;
+        font-family: "Heading now 61-68", "Aileron", system-ui, sans-serif;
+        text-transform: uppercase;
+        font-weight: 800;
+        font-size: clamp(3.5rem, 6.6vw, 4.9rem);
+        letter-spacing: 0.22em;
+        color: #FDF8EE;
+        margin-bottom: 0.3rem;
     }
 
     .inkling-hero-subtitle {
-        font-family: 'Inter', sans-serif;
+        font-family: "Aileron", system-ui, sans-serif;
         font-size: 0.98rem;
-        line-height: 1.5;
-        color: #6C2C25;
-        max-width: 600px;
+        line-height: 1.7;
+        color: rgba(252,248,240,0.9);
+        max-width: 560px;
         margin-bottom: 0.9rem;
     }
 
     .inkling-hero-pills {
         display: flex;
         flex-wrap: wrap;
-        gap: 0.5rem;
-        margin-top: 0.5rem;
+        gap: 0.45rem;
+        margin-top: 0.35rem;
     }
 
     .inkling-pill {
-        font-family: 'Montserrat', sans-serif;
+        font-family: "Lekton", monospace;
         font-size: 0.7rem;
         text-transform: uppercase;
-        letter-spacing: 0.12em;
-        padding: 0.25rem 0.7rem;
+        letter-spacing: 0.2em;
+        padding: 0.25rem 0.8rem;
         border-radius: 999px;
-        border: 1px solid rgba(108,44,37,0.28);
-        background: #FFFFFFA8;
+        border: 1px solid rgba(250,245,234,0.6);
+        background: var(--inkling-pill-bg);
+        color: rgba(250,245,234,0.92);
+        backdrop-filter: blur(4px);
     }
 
-    /* Cards */
-    .inkling-card, .inkling-team-card {
-        background: #FFFFFF;
-        border-radius: 16px;
-        padding: 1.8rem 2rem;
-        border: 1px solid rgba(108,44,37,0.15);
-        box-shadow: 0 10px 24px rgba(0,0,0,0.08);
-        transition: transform 0.25s ease;
-        margin-top: 1rem;
-    }
-
-    .inkling-card:hover, .inkling-team-card:hover {
-        transform: translateY(-4px);
-    }
-
-    /* Team section */
-    .inkling-team-role {
-        font-family: 'Montserrat', sans-serif;
+    .inkling-hero::after {
+        content: "BCI Speller";
+        justify-self: flex-end;
+        align-self: flex-start;
+        font-family: "Lekton", monospace;
         text-transform: uppercase;
-        letter-spacing: 0.16em;
-        font-size: 0.75rem;
-        color: #7CA2E0;
-        margin-bottom: 0.2rem;
+        letter-spacing: 0.3em;
+        font-size: 0.62rem;
+        padding: 0.45rem 0.9rem;
+        border-radius: 999px;
+        border: 1px solid rgba(250,245,234,0.3);
+        background: rgba(3,6,20,0.4);
+        color: rgba(250,245,234,0.9);
+    }
+
+    /* ------------------------------------------------------------
+       CARDS (PANELS & TEAM)
+       ------------------------------------------------------------ */
+
+    .inkling-card,
+    .inkling-team-card {
+        background: var(--inkling-panel);
+        border-radius: 18px;
+        padding: 1.7rem 2rem;
+        border: 1px solid var(--inkling-line-soft);
+        box-shadow:
+            0 10px 26px rgba(0,0,0,0.06),
+            0 1px 0 rgba(255,255,255,0.9) inset;
+        margin-top: 1.3rem;
+        transition:
+            transform 200ms ease-out,
+            box-shadow 200ms ease-out,
+            border-color 200ms ease-out,
+            background-color 200ms ease-out;
+    }
+
+    .inkling-card:hover,
+    .inkling-team-card:hover {
+        transform: translateY(-3px);
+        box-shadow:
+            0 16px 40px rgba(0,0,0,0.16),
+            0 1px 0 rgba(255,255,255,0.9) inset;
+        border-color: var(--inkling-line-strong);
+        background-color: var(--inkling-bg-cream-soft);
+    }
+
+    .inkling-team-role {
+        font-family: "Lekton", monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.3em;
+        font-size: 0.72rem;
+        color: var(--inkling-blue-soft);
+        margin-bottom: 0.25rem;
     }
 
     .inkling-team-name {
-        font-family: 'Playfair Display', serif;
-        font-size: 1.4rem;
-        margin-bottom: 0.25rem;
-        color: #6C2C25;
+        font-family: "Heading now 61-68", "Aileron", system-ui, sans-serif;
+        text-transform: uppercase;
+        font-weight: 800;
+        letter-spacing: 0.18em;
+        font-size: 1.25rem;
+        margin-bottom: 0.2rem;
+        color: var(--inkling-oxblood);
     }
 
     .inkling-team-contact {
-        font-family: 'Inter', sans-serif;
-        font-size: 0.85rem;
-        color: #6C2C25;
-        margin-bottom: 0.6rem;
-        opacity: 0.8;
+        font-family: "Lekton", monospace;
+        font-size: 0.78rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(38,22,18,0.7);
+        margin-bottom: 0.7rem;
     }
 
     .inkling-team-body {
-        font-family: 'Inter', sans-serif;
-        font-size: 0.95rem;
-        line-height: 1.5;
-        color: #6C2C25;
+        font-family: "Aileron", system-ui, sans-serif;
+        font-size: 0.93rem;
+        line-height: 1.7;
+        color: var(--inkling-ink);
     }
 
-    /* Buttons */
+    /* ------------------------------------------------------------
+       BUTTONS
+       ------------------------------------------------------------ */
+
     .stButton>button {
-        background-color: #EB5E3A !important;
-        color: white !important;
-        border-radius: 6px;
-        padding: 0.5rem 1.4rem;
-        font-family: 'Montserrat';
+        background: linear-gradient(120deg, var(--inkling-blue) 0%, var(--inkling-blue-soft) 50%, var(--inkling-oxblood-soft) 100%) !important;
+        color: #FDF8EE !important;
+        border-radius: 999px;
+        padding: 0.45rem 1.7rem;
+        font-family: "Lekton", monospace;
         text-transform: uppercase;
-        letter-spacing: 0.1em;
+        letter-spacing: 0.28em;
+        font-size: 0.72rem;
         border: none;
+        box-shadow: 0 10px 22px rgba(0,0,0,0.25);
+        transition:
+            transform 120ms ease-out,
+            box-shadow 120ms ease-out,
+            filter 120ms ease-out;
     }
 
     .stButton>button:hover {
-        background-color: #c74928 !important;
+        transform: translateY(-1px);
+        filter: brightness(1.03);
+        box-shadow: 0 16px 30px rgba(0,0,0,0.32);
     }
 
-    /* Text areas */
-    textarea {
-        background: #FFFFFF !important;
-        border-radius: 8px !important;
-        border: 1px solid rgba(108,44,37,0.2) !important;
-        color: #6C2C25 !important;
+    .stButton>button:active {
+        transform: translateY(1px);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.28);
+    }
+
+    /* ------------------------------------------------------------
+       TEXT INPUTS / TEXT AREAS
+       ------------------------------------------------------------ */
+
+    textarea,
+    .stTextInput>div>div>input {
+        background: var(--inkling-bg-cream-soft) !important;
+        border-radius: 14px !important;
+        border: 1px solid var(--inkling-line-soft) !important;
+        color: var(--inkling-ink) !important;
+        font-family: "Aileron", system-ui, sans-serif !important;
+        font-size: 0.9rem !important;
+    }
+
+    textarea:focus,
+    .stTextInput>div>div>input:focus {
+        outline: none !important;
+        border-color: var(--inkling-blue-soft) !important;
+        box-shadow: 0 0 0 1px rgba(36,88,167,0.35) !important;
+    }
+
+    /* ------------------------------------------------------------
+       INFO / STATUS ELEMENTS
+       ------------------------------------------------------------ */
+
+    .stAlert {
+        border-radius: 14px !important;
+        border: 1px solid var(--inkling-line-soft) !important;
+    }
+
+    .stAlert>div {
+        background-color: var(--inkling-bg-cream-soft) !important;
+        color: var(--inkling-oxblood-soft) !important;
+        font-family: "Aileron", system-ui, sans-serif;
+        font-size: 0.9rem;
+    }
+
+    hr {
+        border: none;
+        border-top: 1px solid var(--inkling-line-soft);
+        margin: 1.1rem 0;
     }
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
-
 
 
 # ============================================================
@@ -229,7 +442,6 @@ def render_ssvep_demo():
             st.markdown("Time domain")
 
             with st.container():
-                plt.figure()
                 fig_time, ax_time = plt.subplots()
                 ax_time.plot(t, signal)
                 ax_time.set_xlabel("Time (s)")
@@ -661,11 +873,12 @@ understanding of data-driven methodologies.
 # KEYPAD + LETTER MAPPING
 # ============================================================
 
+# Stage 1: EEG classes 0–11 map to these 12 keypad entries
 KEYPAD_LABELS = [
     "1", "2", "3",
     "4", "5", "6",
     "7", "8", "9",
-    "*", "0", "#"
+    "*", "0", "#",
 ]
 
 LETTER_MAP = {
@@ -683,19 +896,20 @@ LETTER_MAP = {
     "#": [],
 }
 
+# Stage 2: local class indices (0..N-1) per key
 LETTER_CLASS_IDS = {
     "1": [0],
     "*": [0],
     "#": [0],
-    "0": [0, 1, 2],
-    "2": [0, 1, 2, 3],
-    "3": [4, 5, 6, 7],
-    "4": [8, 9, 10, 11],
-    "5": [0, 1, 2, 4],
-    "6": [5, 6, 7, 8],
-    "7": [9, 10, 11, 0, 1],
-    "8": [2, 3, 4, 5],
-    "9": [6, 7, 8, 9, 10],
+    "0": [0, 1, 2],          # 0, space, back
+    "2": [0, 1, 2, 3],       # 2, A, B, C
+    "3": [0, 1, 2, 3],       # 3, D, E, F
+    "4": [0, 1, 2, 3],       # 4, G, H, I
+    "5": [0, 1, 2, 3],       # 5, J, K, L
+    "6": [0, 1, 2, 3],       # 6, M, N, O
+    "7": [0, 1, 2, 3, 4],    # 7, P, Q, R, S
+    "8": [0, 1, 2, 3],       # 8, T, U, V
+    "9": [0, 1, 2, 3, 4],    # 9, W, X, Y, Z
 }
 
 
@@ -976,21 +1190,26 @@ def render_speller_ui():
             if pred_class is None:
                 st.stop()
 
-            allowed_global_ids = LETTER_CLASS_IDS.get(key, [])
-            if not allowed_global_ids:
+            allowed_ids = LETTER_CLASS_IDS.get(key, [])
+            if not allowed_ids:
                 st.error(f"No LETTER_CLASS_IDS defined for key {key}.")
                 st.stop()
 
-            active_ids = allowed_global_ids[:len(panel)]
-            if pred_class not in active_ids:
+            if pred_class not in allowed_ids:
                 st.error(
-                    f"EEG predicted global class {pred_class}, "
-                    f"which is not valid for this panel {active_ids}."
+                    f"EEG predicted local class {pred_class}, "
+                    f"which is not valid for key {key} (allowed {allowed_ids})."
                 )
                 st.stop()
 
-            idx = active_ids.index(pred_class)
-            candidate = panel[idx]
+            if pred_class >= len(panel):
+                st.error(
+                    f"EEG predicted local class {pred_class}, "
+                    f"but panel only has {len(panel)} options."
+                )
+                st.stop()
+
+            candidate = panel[pred_class]
 
             st.session_state.current_candidate_char = candidate
             st.session_state.phase = "char_emg"
@@ -1059,11 +1278,157 @@ def render_speller_ui():
 
 
 # ============================================================
+# COOL VIDEO ANIMATION TAB – EEG + EMG FLOW (DUMMY)
+# ============================================================
+
+def animate_epoch(epoch_pp: np.ndarray, fs: float, title: str):
+    """
+    Animate preprocessed EEG (all channels) over ~5 seconds.
+    """
+    n_channels, n_samples = epoch_pp.shape
+    n_frames = min(500, n_samples)
+
+    st.markdown(f"##### {title}")
+    plot_placeholder = st.empty()
+
+    for t_idx in range(1, n_frames + 1):
+        data = epoch_pp[:, :t_idx]
+        time_axis = np.arange(t_idx) / fs
+
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.set_title("Preprocessed EEG – 8 nodes")
+        for ch_idx in range(n_channels):
+            ax.plot(time_axis, data[ch_idx, :] + ch_idx * 5, label=f"Ch {ch_idx+1}")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Z-scored amplitude + offset")
+        ax.legend(loc="upper right", ncol=4)
+        fig.tight_layout()
+
+        plot_placeholder.pyplot(fig)
+        time.sleep(0.01)
+
+
+def show_selection_card(label: str, value: str):
+    """
+    Show a big branded card displaying the selected key/letter.
+    """
+    st.markdown(
+        f"""
+        <div style="
+            margin-top: 18px;
+            padding: 22px;
+            border-radius: 24px;
+            background: linear-gradient(135deg, #111827 0%, #1f2937 50%, #020617 100%);
+            text-align: center;
+            border: 1px solid rgba(148,163,184,0.6);
+            box-shadow: 0 18px 40px rgba(15,23,42,0.7);
+        ">
+            <div style="
+                font-family: 'Lekton', monospace;
+                color: #9CA3AF;
+                font-size: 0.75rem;
+                letter-spacing: 0.35em;
+                text-transform: uppercase;
+            ">
+                {label}
+            </div>
+            <div style="
+                font-family: 'Heading now 61-68', 'Aileron', system-ui, sans-serif;
+                color: #F9FAFB;
+                font-size: 4.2rem;
+                font-weight: 800;
+                margin-top: 8px;
+                letter-spacing: 0.24em;
+            ">
+                {value}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def show_emg_confirmation(text: str):
+    """
+    Show an EMG confirmation chip/card.
+    """
+    st.markdown(
+        f"""
+        <div style="
+            margin-top: 10px;
+            padding: 0.7rem 1.4rem;
+            border-radius: 999px;
+            background: rgba(71,21,18,0.08);
+            border: 1px solid rgba(71,21,18,0.35);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            font-family: 'Lekton', monospace;
+            font-size: 0.72rem;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: #471512;
+        ">
+            <span style="
+                width: 10px;
+                height: 10px;
+                border-radius: 999px;
+                background: #16A34A;
+                box-shadow: 0 0 0 4px rgba(22,163,74,0.25);
+            "></span>
+            EMG agrees · {text}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_demo_tab():
+    """
+    Sequential animation with dummy data:
+    1. EEG for key '4' (dummy), then show 4
+    2. EMG confirms
+    3. EEG for letter 'H' (dummy), then show H
+    4. EMG confirms
+    """
+    st.markdown('<div class="inkling-card">', unsafe_allow_html=True)
+    st.markdown("### Demo: EEG + EMG flow (dummy data)")
+
+    st.markdown(
+        """
+This sequence shows the *intended* interaction visually:
+
+1. Preprocessed EEG for the **number 4** on the Nokia keypad
+2. EMG confirmation that the key selection is correct
+3. Preprocessed EEG for the **letter H** within that key
+4. EMG confirmation that the letter selection is correct
+"""
+    )
+
+    if st.button("Play demo sequence"):
+        epoch_key4 = np.random.randn(8, 500)
+        animate_epoch(epoch_key4, FS, "EEG · selecting keypad number 4")
+        show_selection_card("Key selected", "4")
+        time.sleep(1.0)
+        show_emg_confirmation("key 4")
+
+        st.markdown("---")
+
+        epoch_H = np.random.randn(8, 500)
+        animate_epoch(epoch_H, FS, "EEG · selecting letter H")
+        show_selection_card("Letter selected", "H")
+        time.sleep(1.0)
+        show_emg_confirmation("letter H")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
 # MAIN ENTRY POINT WITH TABS
 # ============================================================
 
 def main():
-    st.set_page_config(page_title="Inkling EEG + EMG Speller", layout="centered")
+    st.set_page_config(page_title="Inkling – EEG + EMG Speller", layout="centered")
     inject_css()
     init_state()
 
@@ -1091,8 +1456,8 @@ def main():
         unsafe_allow_html=True,
     )
 
-    tab_landing, tab_how, tab_team = st.tabs(
-        ["Landing", "How it works", "Meet the team"]
+    tab_landing, tab_how, tab_demo, tab_team = st.tabs(
+        ["Landing", "How it works", "Demo: EEG + EMG flow", "Meet the team"]
     )
 
     with tab_landing:
@@ -1107,9 +1472,13 @@ contractions to allow typing when standard keyboards and pointing devices are no
     with tab_how:
         render_inkling_explainer()
 
+    with tab_demo:
+        render_demo_tab()
+
     with tab_team:
         render_meet_the_team()
 
 
 if __name__ == "__main__":
     main()
+
