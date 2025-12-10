@@ -207,16 +207,6 @@ def inject_css():
         }
     }
 
-    .inkling-hero-kicker {
-        font-family: "Lekton", monospace;
-        text-transform: uppercase;
-        letter-spacing: 0.35em;
-        font-size: 0.68rem;
-        color: rgba(250,245,234,0.9);
-        margin-bottom: 0.55rem;
-        opacity: 0.9;
-    }
-
     .inkling-hero-title {
         font-family: "Heading now 61-68", "Aileron", system-ui, sans-serif;
         text-transform: uppercase;
@@ -226,6 +216,16 @@ def inject_css():
         color: #FDF8EE;
         margin-bottom: 0.3rem;
         white-space: nowrap;  /* keep INKLING on one line */
+    }
+
+    .inkling-hero-kicker {
+        font-family: "Lekton", monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.35em;
+        font-size: 0.68rem;
+        color: rgba(250,245,234,0.9);
+        margin-bottom: 0.55rem;
+        opacity: 0.9;
     }
 
     .inkling-hero-subtitle {
@@ -304,12 +304,12 @@ def inject_css():
     }
 
     /* ------------------------------------------------------------
-       BUTTONS – OXBLOOD, NO GRADIENT
+       BUTTONS – OXBLOOD, WHITE TEXT
        ------------------------------------------------------------ */
 
     .stButton>button {
         background: var(--inkling-oxblood) !important;
-        color: #FDF8EE !important;
+        color: #FFFFFF !important;
         border-radius: 999px;
         padding: 0.45rem 1.7rem;
         font-family: "Lekton", monospace;
@@ -697,7 +697,6 @@ engineering, data science, and applied machine learning.
 
     st.divider()
 
-    # (team cards unchanged – keeping as you had them)
     # Hildelith
     st.markdown('<div class="inkling-team-card">', unsafe_allow_html=True)
     st.markdown('<div class="inkling-team-role">Project leader</div>', unsafe_allow_html=True)
@@ -833,7 +832,7 @@ understanding of data-driven methodologies.
 
 
 # ============================================================
-# KEYPAD + LETTER MAPPING
+# KEYPAD + LETTER MAPPING (WITH FREQUENCIES)
 # ============================================================
 
 KEYPAD_LABELS = [
@@ -845,15 +844,15 @@ KEYPAD_LABELS = [
 
 LETTER_MAP = {
     "1": [],
-    "2": ["A", "B", "C"],
-    "3": ["D", "E", "F"],
-    "4": ["G", "H", "I"],
-    "5": ["J", "K", "L"],
-    "6": ["M", "N", "O"],
-    "7": ["P", "Q", "R", "S"],
-    "8": ["T", "U", "V"],
-    "9": ["W", "X", "Y", "Z"],
-    "0": [" "],
+    "2": ["A (9.25Hz)", "B (11.25Hz)", "C (13.25Hz)"],
+    "3": ["D (9.25Hz)", "E (11.25Hz)", "F (13.25Hz)"],
+    "4": ["G (9.25Hz)", "H (11.25Hz)", "I (13.25Hz)"],
+    "5": ["J (9.25Hz)", "K (11.25Hz)", "L (13.25Hz)"],
+    "6": ["M (9.25Hz)", "N (11.25Hz)", "O (13.25Hz)"],
+    "7": ["P (9.25Hz)", "Q (11.25Hz)", "R (13.25Hz)", "S (9.75Hz)"],
+    "8": ["T (9.25Hz)", "U (11.25Hz)", "V (13.25Hz)"],
+    "9": ["W (9.25Hz)", "X (11.25Hz)", "Y (13.25Hz)", "Z (9.75Hz)"],
+    "0": [" (9.25Hz)"],
     "*": [],
     "#": [],
 }
@@ -880,7 +879,8 @@ LETTER_CLASS_IDS = {
 
 def build_letter_panel(key: str) -> list[str]:
     if key == "0":
-        return ["0", " ", "<BACK>"]
+        # "0", then space-with-frequency, then BACK
+        return ["0"] + LETTER_MAP["0"] + ["<BACK>"]
 
     letters = LETTER_MAP.get(key, [])
     if letters:
@@ -889,7 +889,23 @@ def build_letter_panel(key: str) -> list[str]:
     return [key]
 
 
+def extract_char_from_token(token: str) -> str:
+    """
+    Take 'H (11.25Hz)' -> 'H'
+    Take ' (9.25Hz)'  -> ' '
+    Keep '<BACK>' as-is.
+    """
+    if token == "<BACK>":
+        return "<BACK>"
+    if token and token[0] == " ":
+        return " "
+    return token[0]
+
+
 def pretty_item(x: str) -> str:
+    """
+    What we show in the UI.
+    """
     if x == " ":
         return "<SPACE>"
     if x == "<BACK>":
@@ -1199,12 +1215,14 @@ def render_speller_ui():
                     candidate = st.session_state.current_candidate_char
 
                     if emg_result == 1:
-                        if candidate == "<BACK>":
+                        actual = extract_char_from_token(candidate)
+
+                        if actual == "<BACK>":
                             st.session_state.typed_text = (
                                 st.session_state.typed_text[:-1]
                             )
                         else:
-                            st.session_state.typed_text += candidate
+                            st.session_state.typed_text += actual
 
                         st.session_state.last_message = (
                             f"EMG confirmed {pretty_item(candidate)}"
@@ -1243,31 +1261,28 @@ def animate_epoch(epoch_pp: np.ndarray, fs: float, title: str):
     Animate preprocessed EEG (all channels) over ~2 seconds.
 
     - Caps duration at 2.0 s
-    - Uses ~60 frames (so it's not unbearably heavy for Streamlit)
+    - Uses ~60 frames
     """
     n_channels, n_samples = epoch_pp.shape
 
-    # --- 1) cap to 2 seconds of data ---
-    max_duration = 2.0  # seconds you want per selection
+    max_duration = 2.0
     max_samples = int(fs * max_duration)
     n_samples = min(n_samples, max_samples)
 
-    # --- 2) choose a limited number of frames ---
-    n_frames = 60  # ~60 FPS for 2 seconds → ~0.033 s per frame
+    n_frames = 60
     frame_indices = np.linspace(1, n_samples, n_frames, dtype=int)
 
     st.markdown(f"##### {title}")
     plot_placeholder = st.empty()
 
-    # time per frame so whole loop ≈ max_duration
-    sleep_per_frame = max_duration / n_frames  # e.g. 2 / 60 ≈ 0.033 s
+    sleep_per_frame = max_duration / n_frames
 
     for t_idx in frame_indices:
         data = epoch_pp[:, :t_idx]
         time_axis = np.arange(t_idx) / fs
 
         fig, ax = plt.subplots(figsize=(10, 4))
-        ax.set_title("Preprocessed EEG – 8 nodes")
+        ax.set_title("Preprocessed EEG - Frequency of 8 Electrodes")
         for ch_idx in range(n_channels):
             ax.plot(time_axis, data[ch_idx, :] + ch_idx * 5, label=f"Ch {ch_idx+1}")
         ax.set_xlabel("Time (s)")
@@ -1279,11 +1294,43 @@ def animate_epoch(epoch_pp: np.ndarray, fs: float, title: str):
         time.sleep(sleep_per_frame)
 
 
-
 def show_selection_card(label: str, value: str):
     """
     Show a big branded card displaying the selected key/letter.
+    If `value` looks like 'P (9.25Hz)', split it into:
+      - main_text: 'P'
+      - freq_text: '9.25Hz'
+    and show the frequency as a secondary line.
     """
+    main_text = value
+    freq_text = None
+
+    # If value has a frequency annotation like "P (9.25Hz)"
+    if "(" in value and "Hz" in value:
+        left, right = value.split("(", 1)
+        main_text = left.strip()
+        freq_text = right.strip(" )")  # -> "9.25Hz"
+
+    # Handle space nicely
+    if main_text == "" or main_text == " ":
+        main_text = "SPACE"
+
+    # Build optional frequency line
+    freq_html = ""
+    if freq_text is not None:
+        freq_html = f"""
+            <div style="
+                margin-top: 4px;
+                font-family: 'Lekton', monospace;
+                font-size: 0.75rem;
+                letter-spacing: 0.22em;
+                text-transform: uppercase;
+                color: #9CA3AF;
+            ">
+                {freq_text}
+            </div>
+        """
+
     st.markdown(
         f"""
         <div style="
@@ -1312,8 +1359,9 @@ def show_selection_card(label: str, value: str):
                 margin-top: 8px;
                 letter-spacing: 0.24em;
             ">
-                {value}
+                {main_text}
             </div>
+            {freq_html}
         </div>
         """,
         unsafe_allow_html=True,
@@ -1356,9 +1404,13 @@ def show_emg_confirmation(text: str):
 
 
 def _find_key_for_letter(letter: str) -> str | None:
-    for k, letters in LETTER_MAP.items():
-        if letter in letters:
-            return k
+    """
+    Given 'P', find which keypad key contains a token like 'P (9.25Hz)'.
+    """
+    for k, tokens in LETTER_MAP.items():
+        for tok in tokens:
+            if tok and tok[0] == letter:
+                return k
     return None
 
 
@@ -1395,21 +1447,33 @@ The decoded text builds up character by character, as it would in a real session
             if key is None:
                 continue
 
-            # KEY EEG
+            # KEY EEG (generic title, no "keypad 7" text)
             epoch_key = np.random.randn(8, 500)
-            animate_epoch(epoch_key, FS, f"EEG · selecting keypad {key}")
+            animate_epoch(epoch_key, FS, "EEG window – keypad selection")
             show_selection_card("Key selected", key)
             time.sleep(0.6)
             show_emg_confirmation("key")
             st.markdown("---")
 
-            # LETTER EEG
+            # LETTER EEG (generic title)
             epoch_letter = np.random.randn(8, 500)
-            animate_epoch(epoch_letter, FS, "EEG · refining to letter")
-            show_selection_card("Letter selected", letter)
+            animate_epoch(epoch_letter, FS, "EEG window – letter selection")
+
+            # find the token like 'P (9.25Hz)' for display
+            display_token = None
+            for tok in LETTER_MAP.get(key, []):
+                if tok and tok[0] == letter:
+                    display_token = tok
+                    break
+
+            if display_token is None:
+                display_token = letter  # fallback
+
+            show_selection_card("Letter selected", display_token)
             time.sleep(0.6)
             show_emg_confirmation("letter")
 
+            # decoded text only uses the bare letter
             typed += letter
             typed_placeholder.markdown(
                 f"""
@@ -1447,24 +1511,26 @@ def main():
     inject_css()
     init_state()
 
-    # Hero section
+    # Hero section – logo above subtitle
     st.markdown(
         """
         <div class="inkling-hero">
-            <div class="inkling-hero-kicker">
-                Hybrid EEG & EMG communication interface
-            </div>
-            <div class="inkling-hero-title">
-                Inkling
-            </div>
-            <p class="inkling-hero-subtitle">
-                A minimal-movement speller that fuses visual brain rhythms with tiny muscle bursts,
-                designed for contexts where conventional typing and pointing are no longer possible.
-            </p>
-            <div class="inkling-hero-pills">
-                <div class="inkling-pill">SSVEP decoding</div>
-                <div class="inkling-pill">Intent bursts</div>
-                <div class="inkling-pill">Real-time control</div>
+            <div>
+                <div class="inkling-hero-title">
+                    Inkling
+                </div>
+                <div class="inkling-hero-kicker">
+                    Hybrid EEG & EMG communication interface
+                </div>
+                <p class="inkling-hero-subtitle">
+                    A minimal-movement speller that fuses visual brain rhythms with tiny muscle bursts,
+                    designed for contexts where conventional typing and pointing are no longer possible.
+                </p>
+                <div class="inkling-hero-pills">
+                    <div class="inkling-pill">SSVEP decoding</div>
+                    <div class="inkling-pill">Intent bursts</div>
+                    <div class="inkling-pill">Real-time control</div>
+                </div>
             </div>
         </div>
         """,
