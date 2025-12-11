@@ -28,6 +28,7 @@ RECORDINGS_ROOT = Path.home() / "Documents" / "OpenBCI_GUI" / "Recordings"
 
 EEG_CSV_GLOB = "BrainFlow-RAW_*.csv"  # matches OpenBCI BrainFlow raw exports
 
+
 def _find_ssvep_package(start: Path) -> Tuple[Path, Path]:
     for root, dirs, files in os.walk(start):
         if "ssvep" in dirs:
@@ -68,6 +69,48 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 N_CHANS = 8
 N_SAMPLES = 500
 N_CLASSES = 12
+
+# ------------------------------------------------------------
+# Human-readable class → keypad / letters description
+# ------------------------------------------------------------
+
+# We assume the 12 EEG classes map to keypad positions:
+#   0..11 → 1,2,3,4,5,6,7,8,9,*,0,#
+CLASS_LAYOUT: Dict[int, Dict[str, object]] = {
+    0:  {"key": "1", "options": ["1"]},
+    1:  {"key": "2", "options": ["2", "A", "B", "C"]},
+    2:  {"key": "3", "options": ["3", "D", "E", "F"]},
+    3:  {"key": "4", "options": ["4", "G", "H", "I"]},
+    4:  {"key": "5", "options": ["5", "J", "K", "L"]},
+    5:  {"key": "6", "options": ["6", "M", "N", "O"]},
+    6:  {"key": "7", "options": ["7", "P", "Q", "R", "S"]},
+    7:  {"key": "8", "options": ["8", "T", "U", "V"]},
+    8:  {"key": "9", "options": ["9", "W", "X", "Y", "Z"]},
+    9:  {"key": "*", "options": ["*"]},
+    10: {"key": "0", "options": ["0", "backspace", "space"]},
+    11: {"key": "#", "options": ["#"]},
+}
+
+
+def _describe_class(pred_class: int) -> str:
+    """
+    Turn a class index into a human-readable description like:
+      'Selected class is 2: now select either 2, A, B, C.'
+    """
+    info = CLASS_LAYOUT.get(pred_class)
+    if info is None:
+        return f"Selected class index {pred_class} (no layout defined)."
+
+    key = info["key"]
+    options = info["options"]
+
+    # Classes that only contain a single symbol (1, *, #, etc.)
+    if not options or len(options) == 1:
+        return f"Selected class is {key}."
+
+    choices = ", ".join(str(x) for x in options)
+    return f"Selected class is {key}: now select either {choices}."
+
 
 app = FastAPI(title="EEG SSVEP Inference API")
 
@@ -297,7 +340,10 @@ async def predict(
 # Live EEG prediction: upload + auto-watcher
 # ------------------------------------------------------------
 
-EEG_LABELS: Dict[int, str] = {i: f"class_{i}" for i in range(N_CLASSES)}
+# Use the human-readable descriptions for each class
+EEG_LABELS: Dict[int, str] = {
+    i: _describe_class(i) for i in range(N_CLASSES)
+}
 
 LAST_AUTO_PREDICTION: Optional[Dict[str, object]] = None
 
@@ -405,6 +451,3 @@ def _start_watcher():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("fast:app", host="0.0.0.0", port=8000, reload=True)
-
-#create a button on streamlit that fetches the latest .csv then runs it
-#through the model (as the manual api did)
