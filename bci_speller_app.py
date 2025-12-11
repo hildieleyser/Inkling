@@ -1,10 +1,9 @@
-
 # bci_speller_streamlit.py
 # Streamlit UI for Inkling: hybrid EEG + EMG speller
 
 import time
 from io import BytesIO
-from typing import Optional
+from typing import Optional, List
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -28,6 +27,7 @@ def rerun():
     except AttributeError:
         st.experimental_rerun()
 
+
 def inject_css():
     css = """
     <style>
@@ -46,12 +46,7 @@ def inject_css():
     /* GLOBAL APP BACKGROUND -------------------------------------------- */
 
     .stApp {
-        background: linear-gradient(
-            140deg,
-            var(--ink-cream) 0%,
-            #f7f2e6 40%,
-            var(--ink-primary) 130%
-        );
+        background: #ECE2CD;
         color: #0a0f14;
         font-family: "Gilroy", "Inter", sans-serif;
     }
@@ -169,20 +164,183 @@ def inject_css():
 
     .inkling-card,
     .inkling-team-card {
-        background: linear-gradient(145deg, rgba(236,226,205,0.85), rgba(213,199,180,0.75));
-        border-radius: 18px;
-        padding: 1.7rem 2rem;
-        border: 1px solid rgba(10,15,20,0.12);
-        box-shadow: 0 14px 30px rgba(0,0,0,0.1);
-        margin-top: 1.2rem;
-        transition: all 140ms ease;
+        position: relative;
+        background: linear-gradient(165deg, rgba(255,255,255,0.96), rgba(244,237,224,0.9));
+        border-radius: 16px;
+        padding: 1.3rem 1.6rem;
+        border: 1px solid rgba(10,15,20,0.08);
+        box-shadow: 0 12px 28px rgba(0,0,0,0.08);
+        margin-top: 1rem;
+        transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
     }
 
     .inkling-card:hover,
     .inkling-team-card:hover {
         transform: translateY(-3px);
         box-shadow: var(--ink-shadow-strong);
-        border-color: rgba(42,79,152,0.35);
+        border-color: rgba(42,79,152,0.2);
+    }
+
+    .inkling-card::before,
+    .inkling-team-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: linear-gradient(120deg, rgba(42,79,152,0.08), rgba(134,1,0,0.06));
+        opacity: 0.9;
+        pointer-events: none;
+        z-index: 0;
+    }
+
+    .inkling-card > *,
+    .inkling-team-card > * {
+        position: relative;
+        z-index: 1;
+    }
+
+    /* TEAM TEXT ---------------------------------------------------------- */
+    .inkling-team-role {
+        font-family: "Lekton", monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.22em;
+        font-size: 0.75rem;
+        color: var(--ink-primary);
+        margin-bottom: 0.2rem;
+    }
+
+    .inkling-team-name {
+        font-size: 1.3rem;
+        font-weight: 700;
+        margin-bottom: 0.1rem;
+        color: #1f2933;
+    }
+
+    .inkling-team-contact {
+        font-size: 0.9rem;
+        color: #4b5563;
+        margin-bottom: 0.6rem;
+    }
+
+    .inkling-team-body {
+        font-size: 0.95rem;
+        line-height: 1.6;
+        color: #111827;
+    }
+
+    /* SELECTION CARD (PREDICTION PANEL) --------------------------------- */
+    .selection-card {
+        margin-top: 12px;
+        padding: 16px 20px;
+        border-radius: 18px;
+        background: var(--ink-brown);
+        color: var(--ink-cream);
+        border: 1px solid rgba(236,226,205,0.7);
+        box-shadow: var(--ink-shadow-soft);
+    }
+
+    .selection-card-label {
+        font-family: "Lekton", monospace;
+        font-size: 0.72rem;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        opacity: 0.9;
+    }
+
+    .selection-card-main {
+        font-family: "Space Grotesk", system-ui, sans-serif;
+        font-size: 2.2rem;
+        font-weight: 700;
+        margin-top: 0.3rem;
+        letter-spacing: 0.12em;
+    }
+
+    .selection-card-sub {
+        margin-top: 0.2rem;
+        font-size: 0.8rem;
+        opacity: 0.8;
+    }
+
+    /* DEMO FRAME --------------------------------------------------------- */
+    .inkling-demo-frame {
+        border-radius: 18px;
+        padding: 1rem 1.2rem 1.2rem;
+        background: rgba(255,255,255,0.9);
+        border: 1px solid rgba(0,0,0,0.06);
+        box-shadow: var(--ink-shadow-soft);
+    }
+
+    /* DARK MODE SUPPORT -------------------------------------------------- */
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --ink-primary: #8fb5ff;
+            --ink-cream: #1b1f26;
+            --ink-brown: #e8edf5;
+            --ink-red: #ff7b7b;
+            --ink-shadow-soft: 0 10px 24px rgba(0,0,0,0.4);
+            --ink-shadow-strong: 0 20px 44px rgba(0,0,0,0.55);
+        }
+
+        .stApp {
+            background: radial-gradient(circle at 20% 30%, rgba(143,181,255,0.12), transparent 32%),
+                        radial-gradient(circle at 80% 60%, rgba(255,123,123,0.12), transparent 32%),
+                        #0d1117;
+            color: #e8edf5;
+        }
+
+        h1, h2, h3, h4,
+        p, li {
+            color: #e8edf5 !important;
+        }
+
+        .inkling-hero {
+            background: linear-gradient(120deg, #101725, #172135, #0f172a);
+            color: #e8edf5;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: var(--ink-shadow-strong);
+        }
+
+        .inkling-hero-kicker,
+        .inkling-hero-subtitle {
+            color: rgba(232,237,245,0.9);
+        }
+
+        .inkling-pill {
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: #e8edf5;
+        }
+
+        .inkling-card,
+        .inkling-team-card {
+            background: linear-gradient(145deg, rgba(20,26,35,0.92), rgba(13,17,24,0.9));
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: var(--ink-shadow-soft);
+            border-radius: 16px;
+            padding: 1.6rem 1.8rem;
+        }
+
+        .stButton>button {
+            background: #8fb5ff !important;
+            color: #0d1117 !important;
+        }
+
+        .stButton>button:hover {
+            background: #ff7b7b !important;
+        }
+
+        .selection-card {
+            background: linear-gradient(135deg, #0b1220 0%, #101826 50%, #04070f 100%);
+            border: 1px solid rgba(143,181,255,0.28);
+            color: #F9FAFB;
+        }
+
+        textarea,
+        .stTextInput>div>div>input {
+            background: rgba(20,26,35,0.9) !important;
+            color: #e8edf5 !important;
+            border: 1px solid rgba(143,181,255,0.25) !important;
+        }
     }
 
     /* BUTTONS ------------------------------------------------------------ */
@@ -531,6 +689,10 @@ engineering, data science, and applied machine learning.
     st.markdown('<div class="inkling-team-role">Project leader</div>', unsafe_allow_html=True)
     st.markdown('<div class="inkling-team-name">Hildelith Frances Leyser</div>', unsafe_allow_html=True)
     st.markdown(
+        '<div class="inkling-team-contact">Contact: hildieleyser@gmail.com</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
         """
 <div class="inkling-team-body">
 I am a neuroscience PhD student at McGill University. At the RIKEN Center for Brain Science
@@ -566,7 +728,7 @@ and in my family.
     st.markdown('<div class="inkling-team-role">Team member</div>', unsafe_allow_html=True)
     st.markdown('<div class="inkling-team-name">Tanya Saha Gupta</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="inkling-team-contact">Contact: tanyasahagupta@gmail.com · +44 7800 648047</div>',
+        '<div class="inkling-team-contact">Contact: tanyasahagupta@gmail.com</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -599,7 +761,7 @@ signals using BCI headgear.
     st.markdown('<div class="inkling-team-role">Team member</div>', unsafe_allow_html=True)
     st.markdown('<div class="inkling-team-name">Zaki Baalwaan</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="inkling-team-contact">Contact: +44 7454 812223 · zaki_b98@hotmail.co.uk</div>',
+        '<div class="inkling-team-contact">Contact:zaki_b98@hotmail.co.uk</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -634,7 +796,7 @@ signals and to extend both the project and my technical expertise.
     st.markdown('<div class="inkling-team-role">Team member</div>', unsafe_allow_html=True)
     st.markdown('<div class="inkling-team-name">Rayan Hasan</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="inkling-team-contact">Contact: +1 365 292 5250 · rayan@dada.com.pk</div>',
+        '<div class="inkling-team-contact">Contact:rayan@dada.com.pk</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -706,7 +868,7 @@ LETTER_CLASS_IDS = {
 # PANEL / SELECTION HELPERS
 # ============================================================
 
-def build_letter_panel(key: str) -> list[str]:
+def build_letter_panel(key: str) -> List[str]:
     if key == "0":
         return ["0"] + LETTER_MAP["0"] + ["<BACK>"]
 
@@ -878,9 +1040,9 @@ def render_speller_ui():
         st.markdown("### Prediction status")
 
         if st.session_state.last_prediction is not None:
-            label = None
             payload = st.session_state.last_prediction_payload or {}
             label = payload.get("label")
+
             st.markdown(
                 f"""
                 <div class="selection-card">
@@ -1149,11 +1311,6 @@ def main():
     st.set_page_config(page_title="Inkling – EEG + EMG Speller", layout="wide")
     inject_css()
     init_state()
-    # Animated neural backdrop
-    # st.markdown('<div class="inkling-neural"></div>', unsafe_allow_html=True)
-    # st.markdown('<div class="inkling-neural"></div>', unsafe_allow_html=True)
-    # st.markdown('<div class="inkling-neural"></div>', unsafe_allow_html=True)
-
     # Hero section
     st.markdown(
         """
