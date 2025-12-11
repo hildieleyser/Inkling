@@ -7,6 +7,11 @@ import requests  # for HTTP calls
 import h5py
 from scipy.io import savemat
 import requests  # for HTTP calls
+import tempfile
+from pathlib import Path
+from scipy.io import savemat
+import h5py
+import scipy.io as sio
 
 ###########################################
 # CONFIG
@@ -18,9 +23,9 @@ USE_REAL_MODELS_ON_SIM = False   # if True: NPZ -> FastAPI -> EEGNet/EMG model
 DEBUG_KEYBOARD = True       # keyboard-only control
 USE_SIM_DATA = False        # drive EEG/EMG from simulated data when not in DEBUG
 SIM_DATA_PATH = "eeg_emg_helloworld.npz"
-EMG_BURST_THRESH = 0.5      # envelope/percentile cutoff for sim EMG confirm
-STIM_TIME_KEY = 5.0         # seconds of flicker before querying main keypad EEG
-STIM_TIME_LETTER = 5.0      # seconds of flicker before querying letter EEG
+EMG_BURST_THRESH = 0.5          # envelope/percentile cutoff for sim EMG confirm
+STIM_TIME_KEY = 5.0             # seconds of flicker before querying main keypad EEG
+STIM_TIME_LETTER = 5.0          # seconds of flicker before querying letter EEG
 FONT_NAME = "Helvetica"
 
 # Debug overlay: show real flicker frequencies above each box
@@ -31,9 +36,9 @@ _debug_overlay_on = SHOW_DEBUG_OVERLAY_DEFAULT
 EEG_API_URL = "http://127.0.0.1:8000/predict"        # from api_eeg/fast.py
 EMG_API_URL = "http://127.0.0.1:8001/predict_file"   # from api_emg
 
-# File lists for offline testing (YOU fill these)
+# File lists for offline REAL-file testing
 EEG_FILES = [
-    r"/Users/rayanhasan/code/hildieleyser/Inkling/S001.mat",  # example
+    r"/Users/rayanhasan/code/hildieleyser/Inkling/S001.mat",
 ]
 EMG_FILES = [
     r"/Users/rayanhasan/code/hildieleyser/Inkling/EMG Data Participant 1 Day 1 Block 1.hdf5",
@@ -42,6 +47,9 @@ EMG_FILES = [
 _EEG_FILE_IDX = 0
 _EMG_FILE_IDX = 0
 _EEG_TARGET_IDX = 0
+
+# --- match your EEGNet config ---
+N_CHANS = 8
 
 # --- Universal Box Size (SAME AS 12-TARGET KEYPAD) ---
 BOX_W = 0.42
@@ -167,7 +175,10 @@ def _next_sim_eeg():
     n = _SIM_DATA["labels"].shape[0]
     idx = _SIM_EEG_IDX % n
     _SIM_EEG_IDX += 1
-    return _SIM_DATA["eeg"][idx], int(_SIM_DATA["labels"][idx]), float(_SIM_DATA["fs_eeg"])
+    eeg_trial = _SIM_DATA["eeg"][idx]          # (time,) or (ch,time) or (ch,time,?)
+    label = int(_SIM_DATA["labels"][idx])
+    fs = float(_SIM_DATA["fs_eeg"])
+    return eeg_trial, label, fs
 
 def _next_sim_emg():
     global _SIM_EMG_IDX
@@ -175,11 +186,20 @@ def _next_sim_emg():
     n = _SIM_DATA["emg"].shape[0]
     idx = _SIM_EMG_IDX % n
     _SIM_EMG_IDX += 1
+    emg_trial = _SIM_DATA["emg"][idx]
+    fs = float(_SIM_DATA["fs_emg"])
     emg_label = _SIM_DATA.get("emg_labels", None)
     label = bool(emg_label[idx]) if emg_label is not None else None
-    return _SIM_DATA["emg"][idx], float(_SIM_DATA["fs_emg"]), label
+    return emg_trial, fs, label
 
 def _freq_logits_from_signal(sig, fs):
+    """
+    Simple PSD-based logits from a 1D signal.
+    """
+    sig = np.asarray(sig)
+    if sig.ndim > 1:
+        # average over channels if multi-channel
+        sig = sig.mean(axis=0)
     f = np.fft.rfft(sig)
     hz = np.fft.rfftfreq(len(sig), 1 / fs)
     mags = []
@@ -225,6 +245,60 @@ def _get_eeg_logits_from_sim_via_model():
         logits = _freq_logits_from_signal(sig, fs)
         logits[true_label] += 1.0
         return logits
+
+def _eeg_sim_via_fastapi():
+    """
+    Sim EEG → temp .mat → FastAPI EEGNet → logits (pseudo one-hot).
+    """
+    eeg_trial, label, fs = _next_sim_eeg()
+    eeg_trial = np.asarray(eeg_trial)
+
+    # ensure shape (ch, time)
+    if eeg_trial.ndim == 1:
+        # 1 channel → tile to N_CHANS just so model gets correct shape
+        eeg_epoch = np.tile(eeg_trial[None, :], (N_CHANS, 1))
+    elif eeg_trial.ndim == 2:
+        if eeg_trial.shape[0] == N_CHANS:
+            eeg_epoch = eeg_trial
+        elif eeg_trial.shape[1] == N_CHANS:
+            eeg_epoch = eeg_trial.T
+        else:
+            raise ValueError(f"Sim EEG epoch has wrong shape {eeg_trial.shape}, "
+                             f"cannot map to {N_CHANS} channels.")
+    else:
+        # squeeze extra dims
+        eeg_epoch = np.squeeze(eeg_trial)
+        if eeg_epoch.ndim != 2:
+            raise ValueError(f"Sim EEG epoch has unsupported shape {eeg_trial.shape}")
+
+    # write temporary .mat with key 'epoch'
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mat") as tmp:
+        tmp_path = Path(tmp.name)
+    savemat(tmp_path, {"epoch": eeg_epoch})
+
+    try:
+        with open(tmp_path, "rb") as f:
+            files = {"file": (tmp_path.name, f, "application/octet-stream")}
+            # block/trial/target don't matter because 'epoch' key triggers fallback
+            resp = requests.post(
+                EEG_API_URL,
+                files=files,
+                data={"block_idx": 0, "trial_idx": 0, "target_idx": 0},
+                timeout=10.0
+            )
+
+        resp.raise_for_status()
+        out = resp.json()
+        pred_class = int(out["prediction"])
+        print(f"[SIM→EEGNet] true_label={label}, pred={pred_class}")
+    except Exception as e:
+        print(f"EEG API error for SIM epoch: {e}")
+        return np.zeros(12, dtype=float)
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     logits = np.full(12, -5.0, dtype=float)
     logits[pred_class] = 5.0
@@ -318,6 +392,50 @@ def eeg_predict_letter(key, n_items):
 
     active_ids = LETTER_CLASS_IDS[key][:n_items]
     return _eeg_predict_from_subset(active_ids, thresh=EEG_LETTER_THRESH)
+
+def _emg_sim_via_fastapi():
+    """
+    Sim EMG → temp .hdf5 → FastAPI EMG CNN (correct shape).
+    """
+
+    sig, fs, label = _next_sim_emg()
+    sig = np.asarray(sig)
+
+    # ----------- FIX FOR YOUR EMG CNN -----------
+    # Model expects 1D signal (10000,), not (16,10000)
+    if sig.ndim == 2:
+        sig = sig.mean(axis=0)   # collapse across channels
+
+    # Create temp .hdf5
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".hdf5") as tmp:
+        tmp_path = Path(tmp.name)
+
+    with h5py.File(tmp_path, "w") as h5f:
+        h5f.create_dataset("0", data=sig.astype(np.float32))
+
+    # Call API
+    try:
+        with open(tmp_path, "rb") as f:
+            files = {"file": (tmp_path.name, f, "application/octet-stream")}
+            resp = requests.post(
+                EMG_API_URL,
+                files=files,
+                data={"dataset": "0"},
+                timeout=10.0
+            )
+
+        resp.raise_for_status()
+        out = resp.json()
+        result = int(out["result"])
+        print(f"[SIM→EMG CNN] true_label={label}, pred={result}")
+        return bool(result)
+
+    except Exception as e:
+        print(f"EMG API error for SIM epoch: {e}")
+        return None
+
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 def emg_confirm():
     """
@@ -692,10 +810,9 @@ def main():
         win,
         text=(
             "EEG-EMG Hybrid Speller\n\n"
-            "Real SSVEP frequencies (9.25–14.75 Hz) & phases from paper.\n"
+            "SSVEP frequencies (9.25–14.75 Hz).\n"
             "EEG: look at a flickering key.\n"
             "EMG: gesture to confirm.\n\n"
-            f"Current mode: {mode_desc}\n\n"
             "Controls:\n"
             "  - SPACE: start\n"
             "  - d: toggle frequency overlay\n"
@@ -707,8 +824,8 @@ def main():
         wrapWidth=1.8
     )
     intro.draw(); win.flip()
-    keys = event.waitKeys(keyList=["space","escape"])
-    if "escape" in keys:
+    key = event.waitKeys(keyList=["space","escape"])[0]
+    if key == "escape":
         win.close()
         core.quit()
 
