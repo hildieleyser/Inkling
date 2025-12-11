@@ -1,11 +1,20 @@
 from psychopy import visual, core, event
 import numpy as np
 import os
+import io
+import tempfile
+import requests  # for HTTP calls
+import h5py
+from scipy.io import savemat
 import requests  # for HTTP calls
 
 ###########################################
 # CONFIG
 ###########################################
+DEBUG_KEYBOARD = False          # keyboard-only control
+USE_SIM_DATA = True             # drive EEG/EMG from simulated data (.npz)
+USE_REAL_MODELS_ON_SIM = False   # if True: NPZ -> FastAPI -> EEGNet/EMG model
+
 DEBUG_KEYBOARD = True       # keyboard-only control
 USE_SIM_DATA = False        # drive EEG/EMG from simulated data when not in DEBUG
 SIM_DATA_PATH = "eeg_emg_helloworld.npz"
@@ -40,23 +49,23 @@ BOX_H = 0.30
 
 # =====================================================
 # TRUE SSVEP FREQUENCIES & PHASES (FROM PAPER TABLE)
-# Order matches KEYPAD_LABELS: 1,2,3,4,5,6,7,8,9,0,*,#
+# Order matches KEYPAD_LABELS: 1,2,3,4,5,6,7,8,9,*,0,#
 # =====================================================
 FREQS_MAIN = [
     9.25, 11.25, 13.25,   # 1,2,3  (phase 0·π)
     9.75, 11.75, 13.75,   # 4,5,6  (phase 0.5·π)
     10.25, 12.25, 14.25,  # 7,8,9  (phase 1·π)
-    10.75, 12.75, 14.75   # 0,*,#  (phase 1.5·π)
+    10.75, 12.75, 14.75   # *,0,#  (phase 1.5·π)
 ]
 
 PHASES_MAIN = [
     0.0,           0.0,           0.0,           # 1,2,3
     0.5 * np.pi,   0.5 * np.pi,   0.5 * np.pi,   # 4,5,6
     1.0 * np.pi,   1.0 * np.pi,   1.0 * np.pi,   # 7,8,9
-    1.5 * np.pi,   1.5 * np.pi,   1.5 * np.pi    # 0,*,#
+    1.5 * np.pi,   1.5 * np.pi,   1.5 * np.pi    # *,0,#
 ]
 
-# --- Keypad labels ---
+# --- Keypad labels (row-wise layout) ---
 KEYPAD_LABELS = [
     "1","2","3",
     "4","5","6",
@@ -78,7 +87,7 @@ LETTER_MAP = {
 # Which 12-class indices are used for each letter panel
 # (indices refer to FREQS_MAIN / PHASES_MAIN)
 LETTER_CLASS_IDS = {
-    "0": [0, 1, 2],            # 0, space, back
+    "0": [0, 1, 2],            # 0, space, back   (we'll map meaning in UI)
     "2": [0, 1, 2, 3],         # key + A,B,C
     "3": [4, 5, 6, 7],         # key + D,E,F
     "4": [8, 9, 10, 11],       # key + G,H,I
@@ -183,18 +192,69 @@ def _freq_logits_from_signal(sig, fs):
 ###########################################
 # EEG / EMG PREDICTION HELPERS
 ###########################################
-def get_eeg_logits():
-    if USE_SIM_DATA and not DEBUG_KEYBOARD:
-        sig, label, fs = _next_sim_eeg()
+def _get_eeg_logits_from_sim_via_model():
+    """
+    NPZ → (8 x time) epoch -> in-memory .mat → EEG FastAPI → EEGNet logits.
+    """
+    sig, true_label, fs = _next_sim_eeg()
+    sig = np.asarray(sig, dtype=np.float32)
+
+    # Tile into 8 channels to satisfy EEGNet input (8, time)
+    N_CHANS = 8
+    epoch_raw = np.tile(sig, (N_CHANS, 1))
+
+    # Save to in-memory .mat with key "epoch"
+    mat_buf = io.BytesIO()
+    savemat(mat_buf, {"epoch": epoch_raw})
+    mat_buf.seek(0)
+
+    files = {
+        "file": ("sim_epoch.mat", mat_buf, "application/octet-stream")
+    }
+    params = {"block_idx": 0, "trial_idx": 0, "target_idx": 0}
+
+    try:
+        resp = requests.post(EEG_API_URL, files=files, params=params, timeout=10.0)
+        resp.raise_for_status()
+        out = resp.json()
+        pred_class = int(out["prediction"])   # 0..11
+        print(f"[SIM-API-EEG] model_pred={pred_class} (true={true_label})")
+    except Exception as e:
+        print(f"[SIM-API-EEG ERROR] {e}")
+        # Fallback to classic FFT decoding using true_label hint
         logits = _freq_logits_from_signal(sig, fs)
-        logits[label] += 1.0
+        logits[true_label] += 1.0
         return logits
 
-    if DEBUG_KEYBOARD:
-        # Not actually used for real decoding; just placeholder
+    logits = np.full(12, -5.0, dtype=float)
+    logits[pred_class] = 5.0
+    return logits
+
+def get_eeg_logits():
+    """
+    Master EEG dispatch:
+      - DEBUG keyboard (only when no sim)
+      - SIM + REAL MODEL via API
+      - SIM + classic FFT
+      - Real .mat via API
+    """
+    # Keyboard-only mode (for quick testing without sim)
+    if DEBUG_KEYBOARD and not USE_SIM_DATA:
         return np.zeros(12, dtype=float)
 
-    # ---- REAL EEG VIA FASTAPI + FILE UPLOAD ----
+    # SIMULATION PATHS
+    if USE_SIM_DATA:
+        if USE_REAL_MODELS_ON_SIM:
+            return _get_eeg_logits_from_sim_via_model()
+        else:
+            # Old classic sim: FFT-based decoder
+            sig, true_label, fs = _next_sim_eeg()
+            logits = _freq_logits_from_signal(sig, fs)
+            logits[true_label] += 1.0
+            print(f"[SIM-CLASSIC-EEG] true={true_label}")
+            return logits
+
+    # REAL DATA via FastAPI
     mat_path = _next_eeg_file()
     try:
         with open(mat_path, "rb") as f:
@@ -205,10 +265,10 @@ def get_eeg_logits():
         resp.raise_for_status()
         data = resp.json()
         pred_class = int(data["prediction"])   # 0..11
-        print(f"EEG API: {mat_path} params={params} -> pred {pred_class}")
+        print(f"[REAL-EEG] file={mat_path} params={params} -> pred {pred_class}")
 
     except Exception as e:
-        print(f"EEG API error for file {mat_path}: {e}")
+        print(f"[REAL-EEG API error for file {mat_path}: {e}")
         return np.zeros(12, dtype=float)
 
     logits = np.full(12, -5.0, dtype=float)
@@ -226,10 +286,12 @@ def _eeg_predict_from_subset(active_ids, thresh=None):
     conf = float(probs[k])
 
     if (thresh is not None) and (conf < thresh):
+        print(f"[EEG] low confidence {conf:.2f}, returning None")
         return None
     return k
 
 def eeg_predict_key():
+    # Keyboard override only when not using sim
     use_keyboard = DEBUG_KEYBOARD and not USE_SIM_DATA
     if use_keyboard:
         keys = event.getKeys()
@@ -249,16 +311,24 @@ def eeg_predict_letter(key, n_items):
     if use_keyboard:
         mapping = ["a","b","c","d","e"]
         keys = event.getKeys()
-        for i,k in enumerate(mapping[:n_items]):
+        for i, k in enumerate(mapping[:n_items]):
             if k in keys:
                 return i
         return None
+
     active_ids = LETTER_CLASS_IDS[key][:n_items]
     return _eeg_predict_from_subset(active_ids, thresh=EEG_LETTER_THRESH)
 
 def emg_confirm():
-    use_keyboard = DEBUG_KEYBOARD and not USE_SIM_DATA
-    if use_keyboard:
+    """
+    EMG decision:
+      - keyboard fallback (y/n) when DEBUG and not sim
+      - SIM + real EMG model via FastAPI (USE_REAL_MODELS_ON_SIM)
+      - SIM + envelope threshold (classic)
+      - Real file via EMG FastAPI
+    """
+    # Keyboard override
+    if DEBUG_KEYBOARD and not USE_SIM_DATA:
         keys = event.getKeys()
         if "y" in keys:
             return True
@@ -266,30 +336,68 @@ def emg_confirm():
             return False
         return None
 
-    if USE_SIM_DATA:
-        sig, fs, label = _next_sim_emg()
+    # SIM + real EMG model
+    if USE_SIM_DATA and USE_REAL_MODELS_ON_SIM:
+        sig, fs, true_label = _next_sim_emg()
+        tmp_path = None
+        try:
+            # Create temporary HDF5 with dataset "0"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".hdf5") as tmp:
+                tmp_path = tmp.name
+
+            with h5py.File(tmp_path, "w") as hf:
+                hf.create_dataset("0", data=sig.astype(np.float32))
+
+            with open(tmp_path, "rb") as f:
+                files = {"file": ("sim_emg.hdf5", f, "application/octet-stream")}
+                resp = requests.post(
+                    EMG_API_URL,
+                    files=files,
+                    data={"dataset": "0"},
+                    timeout=10.0
+                )
+            resp.raise_for_status()
+            out = resp.json()
+            pred = int(out["result"])
+            print(f"[SIM-API-EMG] model_pred={pred} true={true_label}")
+            return bool(pred)
+        except Exception as e:
+            print(f"[SIM-API-EMG ERROR] {e}")
+            # Fallback to classic decision
+            env = np.percentile(np.abs(sig), 95)
+            decision = env > EMG_BURST_THRESH
+            return decision
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    # SIM + classic envelope threshold
+    if USE_SIM_DATA and not USE_REAL_MODELS_ON_SIM:
+        sig, fs, true_label = _next_sim_emg()
         env = np.percentile(np.abs(sig), 95)
-        decision = bool(env > EMG_BURST_THRESH)
-        if label is not None:
-            return bool(label)
+        decision = env > EMG_BURST_THRESH
+        print(f"[SIM-CLASSIC-EMG] decision={decision} true={true_label}")
         return decision
 
-    # ---- REAL EMG VIA FASTAPI + FILE UPLOAD ----
+    # REAL EMG FILE via API
     h5_path = _next_emg_file()
     try:
         with open(h5_path, "rb") as f:
             files = {"file": (os.path.basename(h5_path), f, "application/octet-stream")}
-            data = {"dataset": "0"}
-            resp = requests.post(EMG_API_URL, files=files, data=data, timeout=10.0)
-
+            resp = requests.post(
+                EMG_API_URL,
+                files=files,
+                data={"dataset": "0"},
+                timeout=10.0
+            )
         resp.raise_for_status()
         out = resp.json()
         result = int(out["result"])
+        print(f"[REAL-EMG] file={h5_path} -> {result}")
+        return bool(result)
     except Exception as e:
-        print(f"EMG API error for file {h5_path}: {e}")
+        print(f"[REAL-EMG API error: {e}]")
         return None
-
-    return bool(result)
 
 ###########################################
 # UI Helper
@@ -399,10 +507,20 @@ def run_main_keypad(buffer_text):
 # EMG CONFIRMATION (KEY)
 ###########################################
 def run_emg_confirm_key(key, buffer_text):
+    mode_str = (
+        "SIM + API models" if (USE_SIM_DATA and USE_REAL_MODELS_ON_SIM)
+        else "SIM classic" if USE_SIM_DATA
+        else "REAL data"
+    )
+
     msg = visual.TextStim(
         win,
-        text=f"Selected key:\n\n{key}\n\nEMG gesture to CONFIRM.\n\n"
-             "Debug: press 'd' to toggle freq overlay.",
+        text=(
+            f"Selected key:\n\n{key}\n\n"
+            f"EMG gesture to CONFIRM.\n\n"
+            f"Mode: {mode_str}\n"
+            "Debug: press 'd' to toggle freq overlay."
+        ),
         height=0.06,
         color="white",
         font=FONT_NAME,
@@ -535,8 +653,12 @@ def run_letter_panel(key, buffer_text):
 ###########################################
 def run_emg_confirm_letter(letter, buffer_text):
     msg = visual.TextStim(
-        win,text=f"Confirm:\n\n{letter}\n\n(press 'd' to toggle freq overlay)",
-        height=0.06,color="white",font=FONT_NAME,wrapWidth=1.6
+        win,
+        text=f"Confirm:\n\n{letter}\n\n(press 'd' to toggle freq overlay)",
+        height=0.06,
+        color="white",
+        font=FONT_NAME,
+        wrapWidth=1.6
     )
 
     timer = core.Clock()
@@ -558,6 +680,14 @@ def main():
     global _debug_overlay_on
     buffer_text = ""
 
+    mode_desc = (
+        "SIM data → FastAPI models (EEGNet + EMG CNN)"
+        if (USE_SIM_DATA and USE_REAL_MODELS_ON_SIM)
+        else "SIM data → classic FFT/envelope"
+        if USE_SIM_DATA
+        else "REAL .mat/.hdf5 data via APIs"
+    )
+
     intro = visual.TextStim(
         win,
         text=(
@@ -565,7 +695,8 @@ def main():
             "Real SSVEP frequencies (9.25–14.75 Hz) & phases from paper.\n"
             "EEG: look at a flickering key.\n"
             "EMG: gesture to confirm.\n\n"
-            "Controls (DEBUG mode):\n"
+            f"Current mode: {mode_desc}\n\n"
+            "Controls:\n"
             "  - SPACE: start\n"
             "  - d: toggle frequency overlay\n"
             "  - ESC: quit\n"
@@ -576,8 +707,8 @@ def main():
         wrapWidth=1.8
     )
     intro.draw(); win.flip()
-    event.waitKeys(keyList=["space","escape"])
-    if "escape" in event.getKeys():
+    keys = event.waitKeys(keyList=["space","escape"])
+    if "escape" in keys:
         win.close()
         core.quit()
 
