@@ -1,9 +1,11 @@
 # bci_speller_streamlit.py
 # Streamlit UI for Inkling: hybrid EEG + EMG speller
 
+import base64
 import time
 from io import BytesIO
 from typing import Optional, List
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,7 +33,9 @@ def rerun():
 def inject_css():
     css = """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Lekton:wght@400;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Lekton:wght@400;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.cdnfonts.com/css/gilroy-bold');
+    @import url('https://fonts.cdnfonts.com/css/canva-sans');
 
     :root {
         --ink-primary:   #2A4F98;   /* deep blue */
@@ -46,18 +50,51 @@ def inject_css():
     /* GLOBAL APP BACKGROUND -------------------------------------------- */
 
     .stApp {
-        background: #ECE2CD;
+        background: radial-gradient(circle at 12% 18%, rgba(134,1,0,0.12), transparent 26%),
+                    radial-gradient(circle at 82% 26%, rgba(42,79,152,0.18), transparent 26%),
+                    radial-gradient(120% 120% at 50% 0%, rgba(255,255,255,0.7), rgba(236,226,205,0.4), rgba(236,226,205,0.2)),
+                    linear-gradient(135deg, #f3e7d3 0%, #e7ddc9 45%, #d9ceba 100%);
         color: #0a0f14;
-        font-family: "Gilroy", "Inter", sans-serif;
+        font-family: "Canva Sans", "Inter", system-ui, sans-serif;
+        position: relative;
+        overflow: hidden;
+        min-height: 100vh;
+    }
+
+    .stApp::before, .stApp::after {
+        content: "";
+        position: fixed;
+        width: 520px;
+        height: 520px;
+        border-radius: 50%;
+        filter: blur(80px);
+        opacity: 0.22;
+        z-index: -1;
+        pointer-events: none;
+    }
+
+    .stApp::before {
+        top: -120px;
+        left: -140px;
+        background: radial-gradient(circle, #c7504d 0%, transparent 65%);
+    }
+
+    .stApp::after {
+        bottom: -160px;
+        right: -120px;
+        background: radial-gradient(circle, #4f7ac6 0%, transparent 68%);
+    }
+
+    .main, .block-container {
+        position: relative;
+        z-index: 1;
     }
 
     .block-container {
-        width: min(1200px, 95vw);
-        padding-top: 1.8rem;
-        padding-bottom: 3rem;
+        width: min(1320px, 98vw);
+        padding-top: 1.2rem;
+        padding-bottom: 3.6rem;
         margin: 0 auto;
-        z-index: 1;
-        position: relative;
     }
 
     /* TYPOGRAPHY -------------------------------------------------------- */
@@ -74,7 +111,7 @@ def inject_css():
     h3 { font-size: 1.25rem; }
 
     p, li {
-        font-family: "Gilroy", "Inter", sans-serif;
+        font-family: "Canva Sans", "Inter", system-ui, sans-serif;
         color: #0a0f14;
         font-size: 1rem;
     }
@@ -85,25 +122,22 @@ def inject_css():
         margin-top: 2rem;
         margin-bottom: 2.4rem;
         padding: 2.2rem;
-        background: linear-gradient(
-            120deg,
-            var(--ink-primary),
-            #3d6ac0,
-            var(--ink-red)
-        );
+        background: linear-gradient(115deg, rgba(42,79,152,0.9), rgba(61,106,192,0.92), rgba(134,1,0,0.85));
         color: #ffffff;
         border-radius: 24px;
         box-shadow: var(--ink-shadow-strong);
         display: flex;
         flex-direction: column;
         gap: 1rem;
+        position: relative;
+        overflow: hidden;
     }
 
     .inkling-hero-title {
         font-size: clamp(2.8rem, 4.4vw, 3.6rem);
         font-weight: 800;
         letter-spacing: 0.2em;
-        text-transform: uppercase;
+        text-transform: none;
         margin-bottom: 0.3rem;
     }
 
@@ -127,6 +161,18 @@ def inject_css():
         flex-wrap: wrap;
         gap: 0.6rem;
         margin-top: 0.4rem;
+    }
+
+    .inkling-hero::after {
+        content: "";
+        position: absolute;
+        inset: -40% -10% auto auto;
+        height: 120%;
+        width: 40%;
+        background: radial-gradient(circle at 20% 50%, rgba(255,255,255,0.28), transparent 60%);
+        opacity: 0.7;
+        transform: rotate(12deg);
+        pointer-events: none;
     }
 
     .inkling-pill {
@@ -165,20 +211,30 @@ def inject_css():
     .inkling-card,
     .inkling-team-card {
         position: relative;
-        background: linear-gradient(165deg, rgba(255,255,255,0.96), rgba(244,237,224,0.9));
-        border-radius: 16px;
-        padding: 1.3rem 1.6rem;
-        border: 1px solid rgba(10,15,20,0.08);
-        box-shadow: 0 12px 28px rgba(0,0,0,0.08);
+        background: linear-gradient(150deg, rgba(42,79,152,0.08), rgba(134,1,0,0.06)),
+                    linear-gradient(160deg, rgba(255,255,255,0.96), rgba(240,228,212,0.9));
+        border-radius: 20px;
+        padding: 1.6rem 1.9rem;
+        border: 1px solid rgba(42,79,152,0.14);
+        box-shadow: 0 16px 36px rgba(0,0,0,0.12);
         margin-top: 1rem;
-        transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+        transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease, background 200ms ease;
     }
 
     .inkling-card:hover,
     .inkling-team-card:hover {
         transform: translateY(-3px);
         box-shadow: var(--ink-shadow-strong);
-        border-color: rgba(42,79,152,0.2);
+        border-color: rgba(42,79,152,0.24);
+        background: linear-gradient(150deg, rgba(42,79,152,0.1), rgba(134,1,0,0.08)),
+                    linear-gradient(150deg, rgba(255,255,255,0.98), rgba(240,228,212,0.95));
+    }
+
+    .inkling-team-card {
+        display: grid;
+        grid-template-columns: 230px 1fr;
+        gap: 1.6rem;
+        align-items: center;
     }
 
     .inkling-card::before,
@@ -187,8 +243,9 @@ def inject_css():
         position: absolute;
         inset: 0;
         border-radius: inherit;
-        background: linear-gradient(120deg, rgba(42,79,152,0.08), rgba(134,1,0,0.06));
-        opacity: 0.9;
+        background: radial-gradient(circle at 18% 20%, rgba(42,79,152,0.16), transparent 30%),
+                    radial-gradient(circle at 82% 78%, rgba(134,1,0,0.12), transparent 32%);
+        opacity: 0.8;
         pointer-events: none;
         z-index: 0;
     }
@@ -210,22 +267,78 @@ def inject_css():
     }
 
     .inkling-team-name {
-        font-size: 1.3rem;
+        font-size: 1.42rem;
         font-weight: 700;
-        margin-bottom: 0.1rem;
+        margin-bottom: 0.12rem;
         color: #1f2933;
+        font-family: "Gilroy", "Inter", sans-serif;
     }
 
     .inkling-team-contact {
         font-size: 0.9rem;
         color: #4b5563;
-        margin-bottom: 0.6rem;
+        margin-bottom: 0.7rem;
     }
 
     .inkling-team-body {
-        font-size: 0.95rem;
-        line-height: 1.6;
+        font-size: 1rem;
+        line-height: 1.7;
         color: #111827;
+    }
+
+    .inkling-team-body p {
+        margin: 0 0 0.7rem 0;
+    }
+
+    .inkling-team-body p:last-child {
+        margin-bottom: 0;
+    }
+
+    .inkling-team-photo {
+        width: 230px;
+        aspect-ratio: 1 / 1;
+        border-radius: 20px;
+        overflow: hidden;
+        box-shadow: 0 14px 30px rgba(0,0,0,0.18);
+        border: 1px solid rgba(42,79,152,0.18);
+        background: linear-gradient(135deg, #f7f2e7, #e6dcc8);
+    }
+
+    .inkling-team-photo img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    .inkling-team-photo.missing {
+        display: grid;
+        place-items: center;
+        color: #4b5563;
+        font-family: "Lekton", monospace;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        font-size: 0.78rem;
+    }
+
+    @media (max-width: 900px) {
+        .inkling-team-card {
+            grid-template-columns: 170px 1fr;
+        }
+        .inkling-team-photo {
+            width: 190px;
+        }
+    }
+
+    @media (max-width: 640px) {
+        .inkling-team-card {
+            grid-template-columns: 1fr;
+        }
+
+        .inkling-team-photo {
+            width: 220px;
+            margin: 0 auto;
+        }
     }
 
     /* SELECTION CARD (PREDICTION PANEL) --------------------------------- */
@@ -282,9 +395,9 @@ def inject_css():
         }
 
         .stApp {
-            background: radial-gradient(circle at 20% 30%, rgba(143,181,255,0.12), transparent 32%),
-                        radial-gradient(circle at 80% 60%, rgba(255,123,123,0.12), transparent 32%),
-                        #0d1117;
+            background: radial-gradient(circle at 20% 30%, rgba(143,181,255,0.18), transparent 32%),
+                        radial-gradient(circle at 80% 60%, rgba(255,123,123,0.14), transparent 32%),
+                        linear-gradient(145deg, #0d1117 0%, #0b1220 45%, #0a0f1a 100%);
             color: #e8edf5;
         }
 
@@ -313,11 +426,11 @@ def inject_css():
 
         .inkling-card,
         .inkling-team-card {
-            background: linear-gradient(145deg, rgba(20,26,35,0.92), rgba(13,17,24,0.9));
+            background: linear-gradient(150deg, rgba(32,46,76,0.82), rgba(14,18,28,0.92));
             border: 1px solid rgba(255,255,255,0.08);
             box-shadow: var(--ink-shadow-soft);
-            border-radius: 16px;
-            padding: 1.6rem 1.8rem;
+            border-radius: 18px;
+            padding: 1.7rem 1.9rem;
         }
 
         .stButton>button {
@@ -341,6 +454,12 @@ def inject_css():
             color: #e8edf5 !important;
             border: 1px solid rgba(143,181,255,0.25) !important;
         }
+
+        .inkling-team-photo {
+            border: 1px solid rgba(143,181,255,0.28);
+            box-shadow: 0 10px 24px rgba(0,0,0,0.55);
+            background: linear-gradient(135deg, #172135, #0f172a);
+        }
     }
 
     /* BUTTONS ------------------------------------------------------------ */
@@ -363,6 +482,34 @@ def inject_css():
         background: var(--ink-red) !important;
         transform: translateY(-2px);
         box-shadow: 0 12px 28px rgba(0,0,0,0.28);
+    }
+
+    /* LAYOUT HELPERS ----------------------------------------------------- */
+    section[data-testid="stSidebar"] {
+        z-index: 2;
+    }
+
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0.6rem;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 999px;
+        padding: 0.45rem 1.1rem;
+        background: rgba(255,255,255,0.5);
+    }
+
+    .stTabs [data-baseweb="tab-list"]::before,
+    .stTabs [data-baseweb="tab-list"]::after {
+        display: none !important;
+    }
+
+    div[data-testid="stDivider"] hr,
+    hr {
+        border: none !important;
+        height: 1px !important;
+        background: rgba(0,0,0,0.08) !important;
+        box-shadow: none !important;
     }
 
     </style>
@@ -527,10 +674,7 @@ It is identifying which external flicker pattern the visual cortex is currently 
     )
 
     st.markdown("### SSVEP demo")
-    with st.container():
-        st.markdown('<div class="inkling-demo-frame">', unsafe_allow_html=True)
-        render_ssvep_demo()
-        st.markdown("</div>", unsafe_allow_html=True)
+    render_ssvep_demo()
 
     st.divider()
     st.markdown("### Muscle signals: EMG and intention bursts")
@@ -672,6 +816,49 @@ but reliable, motor output.
 # TEAM
 # ============================================================
 
+def _image_to_data_uri(path: str) -> Optional[str]:
+    ext = Path(path).suffix.lower()
+    mime = "image/jpeg" if ext in (".jpg", ".jpeg") else "image/png"
+
+    try:
+        data = Path(path).read_bytes()
+    except FileNotFoundError:
+        return None
+
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+def _paragraphs_to_html(body: str) -> str:
+    paragraphs = [p.strip() for p in body.strip().split("\n\n") if p.strip()]
+    return "".join(f"<p>{p}</p>" for p in paragraphs)
+
+
+def render_team_card(name: str, role: str, contact: str, body: str, photo_path: str):
+    photo_data = _image_to_data_uri(photo_path)
+    photo_html = (
+        f'<div class="inkling-team-photo"><img src="{photo_data}" alt="{name}" loading="lazy" /></div>'
+        if photo_data
+        else '<div class="inkling-team-photo missing">Photo coming soon</div>'
+    )
+
+    st.markdown(
+        f"""
+        <div class="inkling-team-card">
+            {photo_html}
+            <div>
+                <div class="inkling-team-role">{role}</div>
+                <div class="inkling-team-name">{name}</div>
+                <div class="inkling-team-contact">Contact: {contact}</div>
+                <div class="inkling-team-body">
+                    {_paragraphs_to_html(body)}
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_meet_the_team():
     st.markdown("## Meet the team")
 
@@ -684,17 +871,12 @@ engineering, data science, and applied machine learning.
 
     st.divider()
 
-    # Hildelith
-    st.markdown('<div class="inkling-team-card">', unsafe_allow_html=True)
-    st.markdown('<div class="inkling-team-role">Project leader</div>', unsafe_allow_html=True)
-    st.markdown('<div class="inkling-team-name">Hildelith Frances Leyser</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="inkling-team-contact">Contact: hildieleyser@gmail.com</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        """
-<div class="inkling-team-body">
+    render_team_card(
+        name="Hildelith Frances Leyser",
+        role="Project leader",
+        contact="hildieleyser@gmail.com",
+        photo_path="team_photos/hildie.JPG",
+        body="""
 I am a neuroscience PhD student at McGill University. At the RIKEN Center for Brain Science
 and the Montreal Neurological Institute I work on decision-making and sensory-motor
 datasets and I build real-time analysis pipelines. I have practical experience with EEG, EMG,
@@ -715,25 +897,17 @@ wearable prototype for a Parkinson's exoskeleton in collaboration with clinics
 during 2023–2024 and I am a clinic volunteer for Parkinson's awareness.
 These issues are close to my heart and I have worked with them in the lab, in the clinic,
 and in my family.
-</div>
 """,
-        unsafe_allow_html=True,
     )
-    st.markdown("</div>", unsafe_allow_html=True)
 
     st.divider()
 
-    # Tanya
-    st.markdown('<div class="inkling-team-card">', unsafe_allow_html=True)
-    st.markdown('<div class="inkling-team-role">Team member</div>', unsafe_allow_html=True)
-    st.markdown('<div class="inkling-team-name">Tanya Saha Gupta</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="inkling-team-contact">Contact: tanyasahagupta@gmail.com</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        """
-<div class="inkling-team-body">
+    render_team_card(
+        name="Tanya Saha Gupta",
+        role="Team member",
+        contact="tanyasahagupta@gmail.com",
+        photo_path="team_photos/tanya.JPG",
+        body="""
 I have an interdisciplinary background spanning biological science, quantitative analysis,
 and applied machine learning. I hold a degree in Biochemistry from Imperial College
 London, where my academic work required rigorous engagement with human physiology,
@@ -748,25 +922,17 @@ learning and statistical modelling.
 This combination of physiological understanding, quantitative reasoning, and practical
 machine learning implementation motivates my interest in working with EEG and EMG
 signals using BCI headgear.
-</div>
 """,
-        unsafe_allow_html=True,
     )
-    st.markdown("</div>", unsafe_allow_html=True)
 
     st.divider()
 
-    # Zaki
-    st.markdown('<div class="inkling-team-card">', unsafe_allow_html=True)
-    st.markdown('<div class="inkling-team-role">Team member</div>', unsafe_allow_html=True)
-    st.markdown('<div class="inkling-team-name">Zaki Baalwaan</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="inkling-team-contact">Contact:zaki_b98@hotmail.co.uk</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        """
-<div class="inkling-team-body">
+    render_team_card(
+        name="Zaki Baalwaan",
+        role="Team member",
+        contact="zaki_b98@hotmail.co.uk",
+        photo_path="team_photos/zaki.JPG",
+        body="""
 I hold a master in Engineering and I am currently an Assistant Engineer with experience
 primarily in the structures team for Project Centre, where I contribute to the design,
 analysis, and maintenance of highway structures, ensuring safety and compliance with
@@ -783,25 +949,17 @@ My academic and project experience has given me an understanding of neural data
 characteristics, experimental design, and ethical handling of sensitive information.
 Access to the BCI headgear would enable me to apply these skills to real-world neural
 signals and to extend both the project and my technical expertise.
-</div>
 """,
-        unsafe_allow_html=True,
     )
-    st.markdown("</div>", unsafe_allow_html=True)
 
     st.divider()
 
-    # Rayan
-    st.markdown('<div class="inkling-team-card">', unsafe_allow_html=True)
-    st.markdown('<div class="inkling-team-role">Team member</div>', unsafe_allow_html=True)
-    st.markdown('<div class="inkling-team-name">Rayan Hasan</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="inkling-team-contact">Contact:rayan@dada.com.pk</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        """
-<div class="inkling-team-body">
+    render_team_card(
+        name="Rayan Hasan",
+        role="Team member",
+        contact="rayan@dada.com.pk",
+        photo_path="team_photos/rayan.JPG",
+        body="""
 I completed my undergraduate degree at the University of Toronto in Organizational
 Management and Human Geography, a program that strengthened my analytical, research,
 and problem-solving abilities.
@@ -815,11 +973,8 @@ signal processing, and model development.
 These academic and technical experiences support my interest in working with BCI
 headgear and ensure that I can approach its use with responsibility, rigour, and a strong
 understanding of data-driven methodologies.
-</div>
 """,
-        unsafe_allow_html=True,
     )
-    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ============================================================
@@ -1019,7 +1174,6 @@ def render_speller_ui():
     col_main, col_side = st.columns([1.65, 1], gap="large")
 
     with col_main:
-        st.markdown('<div class="inkling-card">', unsafe_allow_html=True)
         st.markdown("### Decode my thoughts")
         st.markdown(
             "Fetch the latest automatic EEG prediction from the backend watcher "
@@ -1033,10 +1187,7 @@ def render_speller_ui():
                 st.session_state.last_prediction_payload = result
                 st.success(f"EEG model predicted letter class {st.session_state.last_prediction}.")
 
-        st.markdown("</div>", unsafe_allow_html=True)
-
     with col_side:
-        st.markdown('<div class="inkling-card">', unsafe_allow_html=True)
         st.markdown("### Prediction status")
 
         if st.session_state.last_prediction is not None:
@@ -1076,11 +1227,9 @@ def render_speller_ui():
                     No prediction yet. Start the EEG server with its watcher and tap
                     <em>Decode my thoughts</em> to pull the latest result.
                 </p>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("</div>", unsafe_allow_html=True)
+                    """,
+                    unsafe_allow_html=True,
+                )
 
 
 # ============================================================
@@ -1121,30 +1270,13 @@ def animate_epoch(epoch_pp: np.ndarray, fs: float, title: str):
 
 def show_selection_card(label: str, value: str):
     main_text = value
-    freq_text = None
 
     if "(" in value and "Hz" in value:
         left, right = value.split("(", 1)
         main_text = left.strip()
-        freq_text = right.strip(" )")
 
     if main_text in ("", " "):
         main_text = "SPACE"
-
-    freq_html = ""
-    if freq_text is not None:
-        freq_html = f"""
-            <div style="
-                margin-top: 4px;
-                font-family: 'Lekton', monospace;
-                font-size: 0.75rem;
-                letter-spacing: 0.22em;
-                text-transform: uppercase;
-                color: #9CA3AF;
-            ">
-                {freq_text}
-            </div>
-        """
 
     st.markdown(
         f"""
@@ -1176,7 +1308,6 @@ def show_selection_card(label: str, value: str):
             ">
                 {main_text}
             </div>
-            {freq_html}
         </div>
         """,
         unsafe_allow_html=True,
@@ -1224,7 +1355,6 @@ def _find_key_for_letter(letter: str) -> Optional[str]:
 
 
 def render_demo_tab():
-    st.markdown('<div class="inkling-card">', unsafe_allow_html=True)
     st.markdown("### Demo: live EEG + EMG decoding (simulated)")
 
     st.markdown(
@@ -1300,8 +1430,6 @@ The decoded text builds up character by character, as it would in a real session
 
             st.markdown("---")
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
 
 # ============================================================
 # MAIN ENTRY POINT WITH TABS
@@ -1337,30 +1465,324 @@ def main():
         unsafe_allow_html=True,
     )
 
-    tab_landing, tab_how, tab_demo, tab_team = st.tabs(
-        ["Landing", "How it works", "Demo: EEG + EMG flow", "Meet the team"]
+    tab_home, tab_how, tab_demo, tab_team, tab_live = st.tabs(
+        ["Home", "How it works", "Demo: EEG + EMG flow", "Meet the team", "Live demo"]
     )
 
-    with tab_landing:
+    with tab_home:
+        # Mission statement with elegant styling
         st.markdown(
             """
-Inkling is an experimental interface that combines brain signals and small muscle
-contractions to allow typing when standard keyboards and pointing devices are not usable.
-"""
-        )
-        st.markdown(
-            """
-            <div class="inkling-splash">
-                <div class="inkling-splash-title">Live session pulse</div>
-                <div class="inkling-splash-body">
-                    Watch the latest EEG class roll in and keep the backend running to feed this UI.
-                    The layout stretches on desktop while staying touch-friendly on mobile.
-                </div>
+            <div style="
+                max-width: 820px;
+                margin: 2rem auto 3rem;
+                text-align: center;
+                padding: 0 1rem;
+            ">
+                <p style="
+                    font-size: clamp(1.15rem, 2.2vw, 1.35rem);
+                    line-height: 1.8;
+                    color: #1f2933;
+                    font-weight: 400;
+                    margin: 0;
+                ">
+                    Inkling fuses <strong style="color: var(--ink-primary);">visual brain rhythms</strong>
+                    with <strong style="color: var(--ink-red);">minimal muscle signals</strong> to enable
+                    communication when conventional input methods are no longer possible.
+                </p>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        render_speller_ui()
+
+        # Three-column feature grid
+        col_a, col_b, col_c = st.columns(3, gap="medium")
+
+        with col_a:
+            st.markdown(
+                """
+                <div class="inkling-card" style="height: 100%; display: flex; flex-direction: column;">
+                    <div style="
+                        width: 56px;
+                        height: 56px;
+                        border-radius: 16px;
+                        background: linear-gradient(135deg, rgba(42,79,152,0.15), rgba(42,79,152,0.08));
+                        display: grid;
+                        place-items: center;
+                        margin-bottom: 1.2rem;
+                        border: 1px solid rgba(42,79,152,0.2);
+                    ">
+                        <span style="font-size: 1.8rem;">🧠</span>
+                    </div>
+                    <h3 style="
+                        font-family: 'Gilroy', 'Inter', sans-serif;
+                        font-weight: 750;
+                        letter-spacing: 0.04em;
+                        margin-bottom: 0.7rem;
+                        color: var(--ink-primary);
+                    ">EEG Decoding</h3>
+                    <p style="margin: 0; font-size: 0.98rem; line-height: 1.7; flex-grow: 1;">
+                        SSVEP signals guide selection across a 36-letter layout organized into
+                        twelve flickering blocks with distinct frequencies.
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with col_b:
+            st.markdown(
+                """
+                <div class="inkling-card" style="height: 100%; display: flex; flex-direction: column;">
+                    <div style="
+                        width: 56px;
+                        height: 56px;
+                        border-radius: 16px;
+                        background: linear-gradient(135deg, rgba(134,1,0,0.15), rgba(134,1,0,0.08));
+                        display: grid;
+                        place-items: center;
+                        margin-bottom: 1.2rem;
+                        border: 1px solid rgba(134,1,0,0.2);
+                    ">
+                        <span style="font-size: 1.8rem;">💪</span>
+                    </div>
+                    <h3 style="
+                        font-family: 'Gilroy', 'Inter', sans-serif;
+                        font-weight: 750;
+                        letter-spacing: 0.04em;
+                        margin-bottom: 0.7rem;
+                        color: var(--ink-red);
+                    ">EMG Control</h3>
+                    <p style="margin: 0; font-size: 0.98rem; line-height: 1.7; flex-grow: 1;">
+                        Tiny muscle bursts serve as decisive confirmation signals—no sustained
+                        force required, just reliable voluntary contractions.
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with col_c:
+            st.markdown(
+                """
+                <div class="inkling-card" style="height: 100%; display: flex; flex-direction: column;">
+                    <div style="
+                        width: 56px;
+                        height: 56px;
+                        border-radius: 16px;
+                        background: linear-gradient(135deg, rgba(63,17,16,0.15), rgba(63,17,16,0.08));
+                        display: grid;
+                        place-items: center;
+                        margin-bottom: 1.2rem;
+                        border: 1px solid rgba(63,17,16,0.2);
+                    ">
+                        <span style="font-size: 1.8rem;">⚡</span>
+                    </div>
+                    <h3 style="
+                        font-family: 'Gilroy', 'Inter', sans-serif;
+                        font-weight: 750;
+                        letter-spacing: 0.04em;
+                        margin-bottom: 0.7rem;
+                        color: var(--ink-brown);
+                    ">Real-Time Flow</h3>
+                    <p style="margin: 0; font-size: 0.98rem; line-height: 1.7; flex-grow: 1;">
+                        Continuous EEG proposals paired with discrete EMG decisions create a
+                        hybrid control loop optimized for minimal fatigue.
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        # # Large showcase section
+        # st.markdown(
+        #     """
+        #     <div style="
+        #         margin: 3.5rem 0 2rem;
+        #         padding: 2.8rem 2.4rem;
+        #         border-radius: 24px;
+        #         background: linear-gradient(135deg, rgba(42,79,152,0.06), rgba(134,1,0,0.04)),
+        #                     linear-gradient(150deg, rgba(255,255,255,0.98), rgba(236,226,205,0.92));
+        #         border: 1px solid rgba(42,79,152,0.16);
+        #         box-shadow: 0 20px 48px rgba(0,0,0,0.14);
+        #         position: relative;
+        #         overflow: hidden;
+        #     ">
+        #         <div style="
+        #             position: absolute;
+        #             inset: -40% auto auto -20%;
+        #             width: 60%;
+        #             height: 140%;
+        #             background: radial-gradient(circle at 30% 40%, rgba(42,79,152,0.14), transparent 55%);
+        #             opacity: 0.8;
+        #             pointer-events: none;
+        #         "></div>
+
+        #         <div style="position: relative; z-index: 1;">
+        #             <div style="
+        #                 font-family: 'Lekton', monospace;
+        #                 text-transform: uppercase;
+        #                 letter-spacing: 0.32em;
+        #                 font-size: 0.72rem;
+        #                 color: var(--ink-primary);
+        #                 margin-bottom: 0.8rem;
+        #                 opacity: 0.9;
+        #             ">Navigation guide</div>
+
+        #             <h2 style="
+        #                 font-family: 'Gilroy', 'Inter', sans-serif;
+        #                 font-weight: 750;
+        #                 font-size: clamp(1.8rem, 3vw, 2.4rem);
+        #                 letter-spacing: 0.04em;
+        #                 margin-bottom: 1.8rem;
+        #                 color: #0a0f14;
+        #             ">Explore the interface</h2>
+
+        #             <div style="
+        #                 display: grid;
+        #                 grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        #                 gap: 1.4rem;
+        #                 margin-top: 1.6rem;
+        #             ">
+        #                 <div style="
+        #                     padding: 1.3rem 1.5rem;
+        #                     border-radius: 16px;
+        #                     background: rgba(255,255,255,0.75);
+        #                     border: 1px solid rgba(42,79,152,0.14);
+        #                     transition: all 140ms ease;
+        #                 ">
+        #                     <div style="
+        #                         font-family: 'Space Grotesk', system-ui, sans-serif;
+        #                         font-weight: 700;
+        #                         font-size: 1.8rem;
+        #                         color: var(--ink-primary);
+        #                         margin-bottom: 0.4rem;
+        #                     ">01</div>
+        #                     <div style="
+        #                         font-weight: 600;
+        #                         margin-bottom: 0.4rem;
+        #                         font-size: 1.05rem;
+        #                     ">How it works</div>
+        #                     <p style="
+        #                         margin: 0;
+        #                         font-size: 0.92rem;
+        #                         line-height: 1.6;
+        #                         color: #4b5563;
+        #                     ">Deep dive into SSVEP, EMG bursts, and the control state machine</p>
+        #                 </div>
+
+        #                 <div style="
+        #                     padding: 1.3rem 1.5rem;
+        #                     border-radius: 16px;
+        #                     background: rgba(255,255,255,0.75);
+        #                     border: 1px solid rgba(134,1,0,0.14);
+        #                     transition: all 140ms ease;
+        #                 ">
+        #                     <div style="
+        #                         font-family: 'Space Grotesk', system-ui, sans-serif;
+        #                         font-weight: 700;
+        #                         font-size: 1.8rem;
+        #                         color: var(--ink-red);
+        #                         margin-bottom: 0.4rem;
+        #                     ">02</div>
+        #                     <div style="
+        #                         font-weight: 600;
+        #                         margin-bottom: 0.4rem;
+        #                         font-size: 1.05rem;
+        #                     ">Demo flow</div>
+        #                     <p style="
+        #                         margin: 0;
+        #                         font-size: 0.92rem;
+        #                         line-height: 1.6;
+        #                         color: #4b5563;
+        #                     ">Watch a simulated decode with animated epochs and decision points</p>
+        #                 </div>
+
+        #                 <div style="
+        #                     padding: 1.3rem 1.5rem;
+        #                     border-radius: 16px;
+        #                     background: rgba(255,255,255,0.75);
+        #                     border: 1px solid rgba(63,17,16,0.14);
+        #                     transition: all 140ms ease;
+        #                 ">
+        #                     <div style="
+        #                         font-family: 'Space Grotesk', system-ui, sans-serif;
+        #                         font-weight: 700;
+        #                         font-size: 1.8rem;
+        #                         color: var(--ink-brown);
+        #                         margin-bottom: 0.4rem;
+        #                     ">03</div>
+        #                     <div style="
+        #                         font-weight: 600;
+        #                         margin-bottom: 0.4rem;
+        #                         font-size: 1.05rem;
+        #                     ">Live demo</div>
+        #                     <p style="
+        #                         margin: 0;
+        #                         font-size: 0.92rem;
+        #                         line-height: 1.6;
+        #                         color: #4b5563;
+        #                     ">Connect to your EEG and EMG servers for real-time predictions</p>
+        #                 </div>
+        #             </div>
+        #         </div>
+        #     </div>
+        #     """,
+        #     unsafe_allow_html=True,
+        # )
+
+        # Video section with enhanced styling
+        st.markdown(
+            """
+            <div style="
+                margin: 3rem 0 1.5rem;
+                text-align: center;
+            ">
+                <div style="
+                    font-family: 'Lekton', monospace;
+                    text-transform: uppercase;
+                    letter-spacing: 0.32em;
+                    font-size: 0.72rem;
+                    color: var(--ink-primary);
+                    margin-bottom: 0.6rem;
+                ">System walkthrough</div>
+                <h2 style="
+                    font-family: 'Gilroy', 'Inter', sans-serif;
+                    font-weight: 750;
+                    font-size: clamp(1.8rem, 3vw, 2.2rem);
+                    letter-spacing: 0.04em;
+                    margin-bottom: 0.8rem;
+                ">Watch Inkling in action</h2>
+                <p style="
+                    font-size: 1.05rem;
+                    color: #4b5563;
+                    max-width: 640px;
+                    margin: 0 auto 2rem;
+                    line-height: 1.7;
+                ">
+                    A complete demonstration of the hybrid EEG + EMG control flow, from signal
+                    acquisition to character selection.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Video container with elegant frame
+        st.markdown(
+            """
+            <div style="
+                border-radius: 20px;
+                overflow: hidden;
+                box-shadow: 0 24px 56px rgba(0,0,0,0.18);
+                border: 1px solid rgba(42,79,152,0.18);
+                margin-bottom: 2rem;
+            ">
+            """,
+            unsafe_allow_html=True,
+        )
+        st.video("https://youtu.be/-Adin1Sho7s")
+        st.markdown("</div>", unsafe_allow_html=True)
 
     with tab_how:
         st.markdown(
@@ -1403,6 +1825,20 @@ contractions to allow typing when standard keyboards and pointing devices are no
             unsafe_allow_html=True,
         )
         render_meet_the_team()
+
+    with tab_live:
+        st.markdown(
+            """
+            <div class="inkling-splash">
+                <div class="inkling-splash-title">Live EEG + EMG</div>
+                <div class="inkling-splash-body">
+                    Keep your EEG and EMG servers running, then fetch the latest prediction and status here.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        render_speller_ui()
 
 
 if __name__ == "__main__":
