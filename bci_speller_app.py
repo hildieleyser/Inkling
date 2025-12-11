@@ -1,12 +1,15 @@
+
 # bci_speller_streamlit.py
 # Streamlit UI for Inkling: hybrid EEG + EMG speller
 
-import streamlit as st
-import requests
-from io import BytesIO
-import numpy as np
-import matplotlib.pyplot as plt
 import time
+from io import BytesIO
+from typing import Optional
+
+import matplotlib.pyplot as plt
+import numpy as np
+import requests
+import streamlit as st
 
 
 # ============================================================
@@ -14,6 +17,7 @@ import time
 # ============================================================
 
 EEG_API_URL = "http://localhost:8000/predict"
+EEG_LAST_PRED_URL = "http://localhost:8000/last_auto_prediction"
 EMG_API_URL = "http://localhost:8001/predict_file"
 FS = 250  # demo sampling rate for EEG animation
 
@@ -24,360 +28,185 @@ def rerun():
     except AttributeError:
         st.experimental_rerun()
 
-
 def inject_css():
     css = """
     <style>
-    /* ------------------------------------------------------------
-       FONT IMPORTS + STACKS
-       ------------------------------------------------------------ */
-
-    /* Lekton (labels / technical) */
-    @import url('https://fonts.googleapis.com/css2?family=Lekton:wght@400;700&display=swap');
-    /* Aileron (main sans – closest web analogue) */
-    @import url('https://fonts.googleapis.com/css2?family=Aileron:wght@300;400;500;600;800&display=swap');
-    /* Script fallback for Bourgiono Rastelenio */
-    @import url('https://fonts.googleapis.com/css2?family=Pacifico&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Lekton:wght@400;700&display=swap');
 
     :root {
-        /* Refined palette */
-        --inkling-bg-cream: #F4EBDD;
-        --inkling-bg-cream-soft: #F7F0E4;
-        --inkling-panel: #FBF7EF;
-        --inkling-ink: #261612;
-        --inkling-blue: #143D7A;
-        --inkling-blue-soft: #2458A7;
-        --inkling-oxblood: #471512;
-        --inkling-oxblood-soft: #6B2620;
-        --inkling-line-soft: rgba(38,22,18,0.10);
-        --inkling-line-strong: rgba(38,22,18,0.22);
-        --inkling-pill-bg: rgba(244,235,221,0.08);
+        --ink-primary:   #2A4F98;   /* deep blue */
+        --ink-cream:     #ECE2CD;   /* warm sand */
+        --ink-brown:     #3F1110;   /* dark brown */
+        --ink-red:       #860100;   /* deep red */
+
+        --ink-shadow-soft: 0 8px 20px rgba(0,0,0,0.08);
+        --ink-shadow-strong: 0 18px 48px rgba(0,0,0,0.18);
     }
 
-    /* ------------------------------------------------------------
-       GLOBAL LAYOUT & BACKGROUND
-       ------------------------------------------------------------ */
+    /* GLOBAL APP BACKGROUND -------------------------------------------- */
 
-    body {
-        margin: 0;
-        padding: 0;
-        background:
-            radial-gradient(circle at 0% 0%, rgba(255,255,255,0.45), transparent 55%),
-            radial-gradient(circle at 100% 100%, rgba(255,255,255,0.35), transparent 55%),
-            linear-gradient(135deg, #F4EBDD 0%, #EFE3D4 45%, #F6EFE5 100%);
-        color: var(--inkling-ink);
-        font-family: "Aileron", system-ui, -apple-system, BlinkMacSystemFont,
-                     "Segoe UI", sans-serif;
+    .stApp {
+        background: linear-gradient(
+            140deg,
+            var(--ink-cream) 0%,
+            #f7f2e6 40%,
+            var(--ink-primary) 130%
+        );
+        color: #0a0f14;
+        font-family: "Gilroy", "Inter", sans-serif;
     }
 
     .block-container {
-        max-width: 980px;
-        padding-top: 1.75rem;
+        width: min(1200px, 95vw);
+        padding-top: 1.8rem;
         padding-bottom: 3rem;
+        margin: 0 auto;
+        z-index: 1;
+        position: relative;
     }
 
-    /* ------------------------------------------------------------
-       TYPOGRAPHY
-       ------------------------------------------------------------ */
+    /* TYPOGRAPHY -------------------------------------------------------- */
 
     h1, h2, h3, h4 {
-        font-family: "Heading now 61-68", "Aileron", system-ui, sans-serif !important;
-        text-transform: uppercase;
-        letter-spacing: 0.14em;
-        font-weight: 800;
-        color: var(--inkling-oxblood) !important;
-        margin-bottom: 0.2rem;
+        font-family: "Gilroy", "Inter", sans-serif !important;
+        color: #0a0f14 !important;
+        font-weight: 700;
+        letter-spacing: 0.04em;
     }
 
-    h1 {
-        font-size: clamp(3.4rem, 6.4vw, 4.6rem);
-        line-height: 1.02;
-    }
-
-    h2 {
-        font-size: clamp(2.2rem, 4.4vw, 3rem);
-        line-height: 1.06;
-    }
-
-    h3, h4 {
-        font-size: 1.2rem;
-        line-height: 1.12;
-    }
+    h1 { font-size: clamp(2.6rem, 4vw, 3.2rem); }
+    h2 { font-size: clamp(1.8rem, 3vw, 2.2rem); }
+    h3 { font-size: 1.25rem; }
 
     p, li {
-        font-family: "Aileron", system-ui, sans-serif;
-        font-size: 0.95rem;
-        line-height: 1.65;
-        color: var(--inkling-ink);
+        font-family: "Gilroy", "Inter", sans-serif;
+        color: #0a0f14;
+        font-size: 1rem;
     }
 
-    .section-label {
-        font-family: "Lekton", monospace;
-        text-transform: uppercase;
-        letter-spacing: 0.3em;
-        color: var(--inkling-blue-soft);
-        font-size: 0.7rem;
-        margin-bottom: -0.1rem;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.6rem;
-    }
-
-    .section-label::before {
-        content: "";
-        display: inline-block;
-        width: 26px;
-        height: 1px;
-        background: var(--inkling-blue-soft);
-        opacity: 0.7;
-    }
-
-    .inkling-script {
-        font-family: "Bourgiono Rastelenio", "Pacifico", cursive;
-        font-size: 1.7rem;
-        letter-spacing: 0.06em;
-        color: var(--inkling-oxblood-soft);
-    }
-
-    /* ------------------------------------------------------------
-       TABS
-       ------------------------------------------------------------ */
-
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 2.5rem;
-        border-bottom: 1px solid var(--inkling-line-soft);
-        margin-top: 0.8rem;
-        padding-bottom: 0.1rem;
-    }
-
-    .stTabs [data-baseweb="tab"] {
-        position: relative;
-        color: rgba(38,22,18,0.7) !important;
-        font-family: "Lekton", monospace;
-        text-transform: uppercase;
-        font-size: 0.78rem;
-        letter-spacing: 0.28em;
-        padding-bottom: 0.7rem;
-        transition: color 160ms ease-out;
-    }
-
-    .stTabs [data-baseweb="tab"]:hover {
-        color: var(--inkling-oxblood-soft) !important;
-    }
-
-    .stTabs [aria-selected="true"] {
-        color: var(--inkling-blue-soft) !important;
-    }
-
-    .stTabs [aria-selected="true"]::after {
-        content: "";
-        position: absolute;
-        left: 0;
-        bottom: 0.1rem;
-        width: 56%;
-        height: 2px;
-        background: linear-gradient(90deg, var(--inkling-blue-soft), var(--inkling-oxblood-soft));
-    }
-
-    /* ------------------------------------------------------------
-       HERO BAND
-       ------------------------------------------------------------ */
+    /* HERO --------------------------------------------------------------- */
 
     .inkling-hero {
-        margin-top: 0.5rem;
-        margin-bottom: 2.3rem;
-        padding: 1.9rem 2.2rem;
-        background: radial-gradient(circle at 0% 0%, rgba(244,235,221,0.08), transparent 55%),
-                    radial-gradient(circle at 100% 100%, rgba(255,255,255,0.18), transparent 55%),
-                    linear-gradient(120deg, #163D7B 0%, #12315F 55%, #192442 100%);
-        color: #FDF8EE;
-        border-radius: 20px;
-        border: 1px solid rgba(255,255,255,0.12);
-        box-shadow: 0 26px 50px rgba(4,6,18,0.55);
-        display: grid;
-        grid-template-columns: minmax(0, 2.3fr) minmax(0, 1.4fr);
-        gap: 1.8rem;
-        align-items: center;
-    }
-
-    @media (max-width: 900px) {
-        .inkling-hero {
-            grid-template-columns: 1fr;
-            padding: 1.6rem 1.5rem;
-        }
+        margin-top: 2rem;
+        margin-bottom: 2.4rem;
+        padding: 2.2rem;
+        background: linear-gradient(
+            120deg,
+            var(--ink-primary),
+            #3d6ac0,
+            var(--ink-red)
+        );
+        color: #ffffff;
+        border-radius: 24px;
+        box-shadow: var(--ink-shadow-strong);
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
     }
 
     .inkling-hero-title {
-        font-family: "Heading now 61-68", "Aileron", system-ui, sans-serif;
-        text-transform: uppercase;
+        font-size: clamp(2.8rem, 4.4vw, 3.6rem);
         font-weight: 800;
-        font-size: clamp(3.5rem, 6.6vw, 4.9rem);
-        letter-spacing: 0.22em;
-        color: #FDF8EE;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
         margin-bottom: 0.3rem;
-        white-space: nowrap;  /* keep INKLING on one line */
     }
 
     .inkling-hero-kicker {
         font-family: "Lekton", monospace;
         text-transform: uppercase;
-        letter-spacing: 0.35em;
-        font-size: 0.68rem;
-        color: rgba(250,245,234,0.9);
-        margin-bottom: 0.55rem;
+        font-size: 0.75rem;
+        letter-spacing: 0.3em;
         opacity: 0.9;
     }
 
     .inkling-hero-subtitle {
-        font-family: "Aileron", system-ui, sans-serif;
-        font-size: 0.98rem;
+        font-size: 1.05rem;
         line-height: 1.7;
-        color: rgba(252,248,240,0.9);
-        max-width: 560px;
-        margin-bottom: 0.9rem;
+        max-width: 600px;
+        opacity: 0.95;
     }
 
     .inkling-hero-pills {
         display: flex;
         flex-wrap: wrap;
-        gap: 0.45rem;
-        margin-top: 0.35rem;
+        gap: 0.6rem;
+        margin-top: 0.4rem;
     }
 
     .inkling-pill {
         font-family: "Lekton", monospace;
-        font-size: 0.7rem;
         text-transform: uppercase;
         letter-spacing: 0.2em;
-        padding: 0.25rem 0.8rem;
+        padding: 0.28rem 1rem;
         border-radius: 999px;
-        border: 1px solid rgba(250,245,234,0.6);
-        background: var(--inkling-pill-bg);
-        color: rgba(250,245,234,0.92);
-        backdrop-filter: blur(4px);
+        background: rgba(255,255,255,0.16);
+        border: 1px solid rgba(255,255,255,0.45);
+        font-size: 0.75rem;
     }
 
-    .inkling-hero::after {
-        content: "BCI Speller";
-        justify-self: flex-end;
-        align-self: flex-start;
+    /* SPLASH CALLOUT ---------------------------------------------------- */
+
+    .inkling-splash {
+        background: transparent;
+        border: none;
+        padding: 0.4rem 0;
+        border-radius: 0;
+        box-shadow: none;
+        margin-bottom: 0.9rem;
+    }
+
+    .inkling-splash-title {
         font-family: "Lekton", monospace;
         text-transform: uppercase;
-        letter-spacing: 0.3em;
-        font-size: 0.62rem;
-        padding: 0.45rem 0.9rem;
-        border-radius: 999px;
-        border: 1px solid rgba(250,245,234,0.3);
-        background: rgba(3,6,20,0.4);
-        color: rgba(250,245,234,0.9);
+        letter-spacing: 0.28em;
+        font-size: 0.78rem;
+        color: var(--ink-primary);
+        margin-bottom: 0.25rem;
     }
 
-    /* ------------------------------------------------------------
-       CARDS
-       ------------------------------------------------------------ */
+    /* CARDS -------------------------------------------------------------- */
 
     .inkling-card,
     .inkling-team-card {
-        background: var(--inkling-panel);
+        background: linear-gradient(145deg, rgba(236,226,205,0.85), rgba(213,199,180,0.75));
         border-radius: 18px;
         padding: 1.7rem 2rem;
-        border: 1px solid var(--inkling-line-soft);
-        box-shadow:
-            0 10px 26px rgba(0,0,0,0.06),
-            0 1px 0 rgba(255,255,255,0.9) inset;
-        margin-top: 1.3rem;
-        transition:
-            transform 200ms ease-out,
-            box-shadow 200ms ease-out,
-            border-color 200ms ease-out,
-            background-color 200ms ease-out;
+        border: 1px solid rgba(10,15,20,0.12);
+        box-shadow: 0 14px 30px rgba(0,0,0,0.1);
+        margin-top: 1.2rem;
+        transition: all 140ms ease;
     }
 
     .inkling-card:hover,
     .inkling-team-card:hover {
         transform: translateY(-3px);
-        box-shadow:
-            0 16px 40px rgba(0,0,0,0.16),
-            0 1px 0 rgba(255,255,255,0.9) inset;
-        border-color: var(--inkling-line-strong);
-        background-color: var(--inkling-bg-cream-soft);
+        box-shadow: var(--ink-shadow-strong);
+        border-color: rgba(42,79,152,0.35);
     }
 
-    /* ------------------------------------------------------------
-       BUTTONS – OXBLOOD, WHITE TEXT
-       ------------------------------------------------------------ */
+    /* BUTTONS ------------------------------------------------------------ */
 
     .stButton>button {
-        background: var(--inkling-oxblood) !important;
-        color: #FFFFFF !important;
+        background: var(--ink-primary) !important;
+        color: #ffffff !important;
         border-radius: 999px;
-        padding: 0.45rem 1.7rem;
-        font-family: "Lekton", monospace;
+        padding: 0.6rem 1.8rem;
         text-transform: uppercase;
-        letter-spacing: 0.28em;
-        font-size: 0.72rem;
+        font-family: "Lekton", monospace;
+        letter-spacing: 0.22em;
+        font-size: 0.78rem;
         border: none;
-        box-shadow: 0 10px 22px rgba(0,0,0,0.25);
-        transition:
-            transform 120ms ease-out,
-            box-shadow 120ms ease-out,
-            filter 120ms ease-out;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+        transition: all 140ms ease;
     }
 
     .stButton>button:hover {
-        transform: translateY(-1px);
-        filter: brightness(1.03);
-        box-shadow: 0 16px 30px rgba(0,0,0,0.32);
-        background: var(--inkling-oxblood-soft) !important;
+        background: var(--ink-red) !important;
+        transform: translateY(-2px);
+        box-shadow: 0 12px 28px rgba(0,0,0,0.28);
     }
 
-    .stButton>button:active {
-        transform: translateY(1px);
-        box-shadow: 0 4px 10px rgba(0,0,0,0.28);
-    }
-
-    /* ------------------------------------------------------------
-       TEXT INPUTS / TEXT AREAS
-       ------------------------------------------------------------ */
-
-    textarea,
-    .stTextInput>div>div>input {
-        background: var(--inkling-bg-cream-soft) !important;
-        border-radius: 14px !important;
-        border: 1px solid var(--inkling-line-soft) !important;
-        color: var(--inkling-ink) !important;
-        font-family: "Aileron", system-ui, sans-serif !important;
-        font-size: 0.9rem !important;
-    }
-
-    textarea:focus,
-    .stTextInput>div>div>input:focus {
-        outline: none !important;
-        border-color: var(--inkling-blue-soft) !important;
-        box-shadow: 0 0 0 1px rgba(36,88,167,0.35) !important;
-    }
-
-    /* ------------------------------------------------------------
-       INFO / STATUS ELEMENTS
-       ------------------------------------------------------------ */
-
-    .stAlert {
-        border-radius: 14px !important;
-        border: 1px solid var(--inkling-line-soft) !important;
-    }
-
-    .stAlert>div {
-        background-color: var(--inkling-bg-cream-soft) !important;
-        color: var(--inkling-oxblood-soft) !important;
-        font-family: "Aileron", system-ui, sans-serif;
-        font-size: 0.9rem;
-    }
-
-    hr {
-        border: none;
-        border-top: 1px solid var(--inkling-line-soft);
-        margin: 1.1rem 0;
-    }
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
@@ -627,17 +456,13 @@ Letter stage
 Simplified logic:
 
 while typing:
-    eeg_choice = argmax p(option | EEG)
-    if confidence is high:
-        highlight(eeg_choice)
+&nbsp;&nbsp;&nbsp;&nbsp;eeg_choice = argmax p(option | EEG)
+&nbsp;&nbsp;&nbsp;&nbsp;if confidence is high: highlight(eeg_choice)
 
-    emg = classify(EMG)
-    if emg == CONFIRM:
-        commit(eeg_choice)
-    elif emg == DELETE:
-        delete_last()
-    elif emg == CANCEL:
-        go_back()
+&nbsp;&nbsp;&nbsp;&nbsp;emg = classify(EMG)
+&nbsp;&nbsp;&nbsp;&nbsp;if emg == CONFIRM: commit(eeg_choice)
+&nbsp;&nbsp;&nbsp;&nbsp;elif emg == DELETE: delete_last()
+&nbsp;&nbsp;&nbsp;&nbsp;elif emg == CANCEL: go_back()
 
 No action is committed without both a reliable EEG signal and an explicit EMG confirmation.
 """
@@ -684,6 +509,10 @@ but reliable, motor output.
 """
     )
 
+
+# ============================================================
+# TEAM
+# ============================================================
 
 def render_meet_the_team():
     st.markdown("## Meet the team")
@@ -879,7 +708,6 @@ LETTER_CLASS_IDS = {
 
 def build_letter_panel(key: str) -> list[str]:
     if key == "0":
-        # "0", then space-with-frequency, then BACK
         return ["0"] + LETTER_MAP["0"] + ["<BACK>"]
 
     letters = LETTER_MAP.get(key, [])
@@ -903,9 +731,6 @@ def extract_char_from_token(token: str) -> str:
 
 
 def pretty_item(x: str) -> str:
-    """
-    What we show in the UI.
-    """
     if x == " ":
         return "<SPACE>"
     if x == "<BACK>":
@@ -965,6 +790,23 @@ def call_emg_api(emg_bytes: bytes, dataset_name: str = "0"):
     return int(result)
 
 
+def get_last_eeg_prediction():
+    try:
+        resp = requests.get(EEG_LAST_PRED_URL, timeout=5)
+        resp.raise_for_status()
+    except Exception as e:
+        st.error(f"EEG API error: {e}")
+        return None
+
+    out = resp.json()
+    pred = out.get("prediction")
+    if pred is None:
+        st.error(f"EEG API response missing 'prediction': {out}")
+        return None
+
+    return out
+
+
 # ============================================================
 # STATE MANAGEMENT
 # ============================================================
@@ -979,6 +821,11 @@ def init_state():
         "last_message": "",
         "eeg_file_bytes": None,
         "emg_file_bytes": None,
+        "last_prediction": None,
+        "last_prediction_payload": None,
+        "block_idx": 0,
+        "trial_idx": 0,
+        "target_idx": 0,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -1002,267 +849,83 @@ def show_typed_text():
     st.text_area("Typed text", st.session_state.typed_text, height=90, disabled=True)
 
 
-def sidebar_inputs():
-    st.sidebar.header("EEG and EMG inputs")
-
-    eeg_file = st.sidebar.file_uploader("EEG .mat file", type=["mat"])
-    if eeg_file is not None:
-        st.session_state.eeg_file_bytes = eeg_file.read()
-
-    emg_file = st.sidebar.file_uploader("EMG .hdf5 file", type=["hdf5"])
-    if emg_file is not None:
-        st.session_state.emg_file_bytes = emg_file.read()
-
-    st.sidebar.markdown("EEG epoch indices")
-    block_idx = st.sidebar.number_input("block_idx", min_value=0, value=0, step=1)
-    trial_idx = st.sidebar.number_input("trial_idx", min_value=0, value=0, step=1)
-    target_idx = st.sidebar.number_input("target_idx", min_value=0, value=0, step=1)
-
-    dataset_name = st.sidebar.text_input("EMG dataset name", value="0")
-
-    return {
-        "block_idx": int(block_idx),
-        "trial_idx": int(trial_idx),
-        "target_idx": int(target_idx),
-        "dataset": dataset_name,
-    }
-
-
 # ============================================================
 # SPELLER UI (LANDING TAB)
 # ============================================================
 
 def render_speller_ui():
-    params = sidebar_inputs()
+    col_main, col_side = st.columns([1.65, 1], gap="large")
 
-    st.markdown('<div class="inkling-card">', unsafe_allow_html=True)
-    st.markdown("### Run the speller")
-    show_typed_text()
-    st.write("---")
-
-    st.write(f"State: {st.session_state.phase}")
-    if st.session_state.last_message:
-        st.info(st.session_state.last_message)
-
-    # idle
-    if st.session_state.phase == "idle":
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Start next character (EEG)"):
-                if st.session_state.eeg_file_bytes is None:
-                    st.error("Upload an EEG .mat file first.")
-                else:
-                    st.session_state.phase = "key_eeg"
-                    st.session_state.last_message = "Running EEG model to select a key."
-                    rerun()
-        with col2:
-            if st.button("Clear text"):
-                st.session_state.typed_text = ""
-                reset_for_next_char()
-                rerun()
-
-    # key EEG
-    if st.session_state.phase == "key_eeg":
-        if st.button("Run EEG to predict key"):
-            if st.session_state.eeg_file_bytes is None:
-                st.error("No EEG file uploaded.")
-            else:
-                pred_class = call_eeg_api(
-                    st.session_state.eeg_file_bytes,
-                    params["block_idx"],
-                    params["trial_idx"],
-                    params["target_idx"],
-                )
-                if pred_class is None:
-                    st.stop()
-
-                if pred_class < 0 or pred_class >= len(KEYPAD_LABELS):
-                    st.error(f"EEG key prediction out of range: {pred_class}")
-                    st.stop()
-
-                key = KEYPAD_LABELS[pred_class]
-                st.session_state.current_key = key
-                st.session_state.phase = "key_emg"
-                st.session_state.last_message = (
-                    f"EEG suggests key {key}. Awaiting EMG confirmation."
-                )
-                rerun()
-
-    if st.session_state.current_key is not None:
-        st.markdown(f"Current key candidate: {st.session_state.current_key}")
-
-    # key EMG
-    if st.session_state.phase == "key_emg":
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            if st.button("EMG confirm key"):
-                if st.session_state.emg_file_bytes is None:
-                    st.error("Upload an EMG .hdf5 file first.")
-                else:
-                    emg_result = call_emg_api(
-                        st.session_state.emg_file_bytes,
-                        dataset_name=params["dataset"],
-                    )
-                    if emg_result is None:
-                        st.stop()
-
-                    key = st.session_state.current_key
-
-                    if emg_result == 1:
-                        st.session_state.last_message = f"EMG confirmed key {key}."
-
-                        letters = LETTER_MAP.get(key, [])
-                        if (not letters and key != "0") or key in ["1", "*", "#"]:
-                            st.session_state.typed_text += key
-                            reset_for_next_char()
-                        else:
-                            panel = build_letter_panel(key)
-                            st.session_state.current_panel_items = panel
-                            st.session_state.phase = "char_eeg"
-                            st.session_state.last_message = (
-                                f"Key {key} confirmed. EEG now selecting from: "
-                                + ", ".join(pretty_item(x) for x in panel)
-                            )
-                    else:
-                        st.session_state.last_message = "EMG rejected key. Restarting."
-                        reset_for_next_char()
-
-                    rerun()
-
-        with col2:
-            if st.button("Reject and restart key"):
-                reset_for_next_char()
-                rerun()
-
-        with col3:
-            if st.button("Cancel"):
-                reset_for_next_char()
-                rerun()
-
-    if st.session_state.current_panel_items is not None:
-        st.markdown("Letter panel:")
-        st.write(", ".join(pretty_item(x) for x in st.session_state.current_panel_items))
-
-    # char EEG
-    if st.session_state.phase == "char_eeg":
-        if st.button("Run EEG to predict letter"):
-            if st.session_state.eeg_file_bytes is None:
-                st.error("No EEG file uploaded.")
-                st.stop()
-
-            panel = st.session_state.current_panel_items
-            key = st.session_state.current_key
-
-            if panel is None or key is None:
-                st.error("Panel or key missing.")
-                st.stop()
-
-            pred_class = call_eeg_api(
-                st.session_state.eeg_file_bytes,
-                params["block_idx"],
-                params["trial_idx"],
-                params["target_idx"],
-            )
-            if pred_class is None:
-                st.stop()
-
-            allowed_ids = LETTER_CLASS_IDS.get(key, [])
-            if not allowed_ids:
-                st.error(f"No LETTER_CLASS_IDS defined for key {key}.")
-                st.stop()
-
-            if pred_class not in allowed_ids:
-                st.error(
-                    f"EEG predicted local class {pred_class}, "
-                    f"which is not valid for key {key} (allowed {allowed_ids})."
-                )
-            elif pred_class >= len(panel):
-                st.error(
-                    f"EEG predicted local class {pred_class}, "
-                    f"but panel only has {len(panel)} options."
-                )
-            else:
-                candidate = panel[pred_class]
-                st.session_state.current_candidate_char = candidate
-                st.session_state.phase = "char_emg"
-                st.session_state.last_message = (
-                    f"EEG suggests {pretty_item(candidate)}. Awaiting EMG confirmation."
-                )
-            rerun()
-
-    if st.session_state.current_candidate_char is not None:
+    with col_main:
+        st.markdown('<div class="inkling-card">', unsafe_allow_html=True)
+        st.markdown("### Decode my thoughts")
         st.markdown(
-            f"Character candidate: {pretty_item(st.session_state.current_candidate_char)}"
+            "Fetch the latest automatic EEG prediction from the backend watcher "
+            "(`/last_auto_prediction`). Keep your EEG server running so it can populate this."
         )
 
-    # char EMG
-    if st.session_state.phase == "char_emg":
-        col1, col2, col3 = st.columns(3)
+        if st.button("Decode my thoughts"):
+            result = get_last_eeg_prediction()
+            if result is not None:
+                st.session_state.last_prediction = result.get("prediction")
+                st.session_state.last_prediction_payload = result
+                st.success(f"EEG model predicted letter class {st.session_state.last_prediction}.")
 
-        with col1:
-            if st.button("EMG confirm letter"):
-                if st.session_state.emg_file_bytes is None:
-                    st.error("Upload an EMG .hdf5 file first.")
-                else:
-                    emg_result = call_emg_api(
-                        st.session_state.emg_file_bytes,
-                        dataset_name=params["dataset"],
-                    )
-                    if emg_result is None:
-                        st.stop()
+        st.markdown("</div>", unsafe_allow_html=True)
 
-                    candidate = st.session_state.current_candidate_char
+    with col_side:
+        st.markdown('<div class="inkling-card">', unsafe_allow_html=True)
+        st.markdown("### Prediction status")
 
-                    if emg_result == 1:
-                        actual = extract_char_from_token(candidate)
+        if st.session_state.last_prediction is not None:
+            label = None
+            payload = st.session_state.last_prediction_payload or {}
+            label = payload.get("label")
+            st.markdown(
+                f"""
+                <div class="selection-card">
+                    <div class="selection-card-label">Predicted letter class</div>
+                    <div class="selection-card-main">{st.session_state.last_prediction}</div>
+                    <div class="selection-card-sub">From /last_auto_prediction</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if label is not None:
+                st.markdown(
+                    f"""
+                    <div style="
+                        margin-top: 10px;
+                        font-family: 'Lekton', monospace;
+                        font-size: 0.78rem;
+                        letter-spacing: 0.14em;
+                        text-transform: uppercase;
+                        color: rgba(11,32,39,0.75);
+                    ">
+                        Label: {label}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                """
+                <p style="color: rgba(11,32,39,0.7);">
+                    No prediction yet. Start the EEG server with its watcher and tap
+                    <em>Decode my thoughts</em> to pull the latest result.
+                </p>
+                """,
+                unsafe_allow_html=True,
+            )
 
-                        if actual == "<BACK>":
-                            st.session_state.typed_text = (
-                                st.session_state.typed_text[:-1]
-                            )
-                        else:
-                            st.session_state.typed_text += actual
-
-                        st.session_state.last_message = (
-                            f"EMG confirmed {pretty_item(candidate)}"
-                        )
-                        reset_for_next_char()
-
-                    else:
-                        st.session_state.current_candidate_char = None
-                        st.session_state.phase = "char_eeg"
-                        st.session_state.last_message = (
-                            "EMG rejected letter. Re-running EEG for this key."
-                        )
-
-                    rerun()
-
-        with col2:
-            if st.button("Cancel letter"):
-                reset_for_next_char()
-                rerun()
-
-        with col3:
-            if st.button("Clear all text"):
-                st.session_state.typed_text = ""
-                reset_for_next_char()
-                rerun()
-
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ============================================================
-# COOL VIDEO ANIMATION TAB – EEG + EMG FLOW (DUMMY, PLATYPUS)
+# DEMO TAB (SIMULATED EEG + EMG)
 # ============================================================
 
 def animate_epoch(epoch_pp: np.ndarray, fs: float, title: str):
-    """
-    Animate preprocessed EEG (all channels) over ~2 seconds.
-
-    - Caps duration at 2.0 s
-    - Uses ~60 frames
-    """
     n_channels, n_samples = epoch_pp.shape
 
     max_duration = 2.0
@@ -1282,7 +945,7 @@ def animate_epoch(epoch_pp: np.ndarray, fs: float, title: str):
         time_axis = np.arange(t_idx) / fs
 
         fig, ax = plt.subplots(figsize=(10, 4))
-        ax.set_title("Preprocessed EEG - Frequency of 8 Electrodes")
+        ax.set_title("Preprocessed EEG – eight channels")
         for ch_idx in range(n_channels):
             ax.plot(time_axis, data[ch_idx, :] + ch_idx * 5, label=f"Ch {ch_idx+1}")
         ax.set_xlabel("Time (s)")
@@ -1295,27 +958,17 @@ def animate_epoch(epoch_pp: np.ndarray, fs: float, title: str):
 
 
 def show_selection_card(label: str, value: str):
-    """
-    Show a big branded card displaying the selected key/letter.
-    If `value` looks like 'P (9.25Hz)', split it into:
-      - main_text: 'P'
-      - freq_text: '9.25Hz'
-    and show the frequency as a secondary line.
-    """
     main_text = value
     freq_text = None
 
-    # If value has a frequency annotation like "P (9.25Hz)"
     if "(" in value and "Hz" in value:
         left, right = value.split("(", 1)
         main_text = left.strip()
-        freq_text = right.strip(" )")  # -> "9.25Hz"
+        freq_text = right.strip(" )")
 
-    # Handle space nicely
-    if main_text == "" or main_text == " ":
+    if main_text in ("", " "):
         main_text = "SPACE"
 
-    # Build optional frequency line
     freq_html = ""
     if freq_text is not None:
         freq_html = f"""
@@ -1352,10 +1005,10 @@ def show_selection_card(label: str, value: str):
                 {label}
             </div>
             <div style="
-                font-family: 'Heading now 61-68', 'Aileron', system-ui, sans-serif;
+                font-family: 'Space Grotesk', system-ui, sans-serif;
                 color: #F9FAFB;
-                font-size: 4.2rem;
-                font-weight: 800;
+                font-size: 4.0rem;
+                font-weight: 700;
                 margin-top: 8px;
                 letter-spacing: 0.24em;
             ">
@@ -1369,9 +1022,6 @@ def show_selection_card(label: str, value: str):
 
 
 def show_emg_confirmation(text: str):
-    """
-    Show an EMG confirmation chip/card.
-    """
     st.markdown(
         f"""
         <div style="
@@ -1403,10 +1053,7 @@ def show_emg_confirmation(text: str):
     )
 
 
-def _find_key_for_letter(letter: str) -> str | None:
-    """
-    Given 'P', find which keypad key contains a token like 'P (9.25Hz)'.
-    """
+def _find_key_for_letter(letter: str) -> Optional[str]:
     for k, tokens in LETTER_MAP.items():
         for tok in tokens:
             if tok and tok[0] == letter:
@@ -1415,10 +1062,6 @@ def _find_key_for_letter(letter: str) -> str | None:
 
 
 def render_demo_tab():
-    """
-    Sequential animation with dummy data, spelling a hidden word (PLATYPUS),
-    but without revealing it up-front in the UI copy.
-    """
     st.markdown('<div class="inkling-card">', unsafe_allow_html=True)
     st.markdown("### Demo: live EEG + EMG decoding (simulated)")
 
@@ -1447,7 +1090,6 @@ The decoded text builds up character by character, as it would in a real session
             if key is None:
                 continue
 
-            # KEY EEG (generic title, no "keypad 7" text)
             epoch_key = np.random.randn(8, 500)
             animate_epoch(epoch_key, FS, "EEG window – keypad selection")
             show_selection_card("Key selected", key)
@@ -1455,11 +1097,9 @@ The decoded text builds up character by character, as it would in a real session
             show_emg_confirmation("key")
             st.markdown("---")
 
-            # LETTER EEG (generic title)
             epoch_letter = np.random.randn(8, 500)
             animate_epoch(epoch_letter, FS, "EEG window – letter selection")
 
-            # find the token like 'P (9.25Hz)' for display
             display_token = None
             for tok in LETTER_MAP.get(key, []):
                 if tok and tok[0] == letter:
@@ -1467,13 +1107,12 @@ The decoded text builds up character by character, as it would in a real session
                     break
 
             if display_token is None:
-                display_token = letter  # fallback
+                display_token = letter
 
             show_selection_card("Letter selected", display_token)
             time.sleep(0.6)
             show_emg_confirmation("letter")
 
-            # decoded text only uses the bare letter
             typed += letter
             typed_placeholder.markdown(
                 f"""
@@ -1487,7 +1126,7 @@ The decoded text builds up character by character, as it would in a real session
                 ">
                     Decoded so far ·
                     <span style="
-                        font-family: 'Heading now 61-68', 'Aileron', system-ui, sans-serif;
+                        font-family: 'Space Grotesk', system-ui, sans-serif;
                         font-size: 1.6rem;
                         letter-spacing: 0.18em;
                         margin-left: 0.6rem;
@@ -1507,11 +1146,15 @@ The decoded text builds up character by character, as it would in a real session
 # ============================================================
 
 def main():
-    st.set_page_config(page_title="Inkling – EEG + EMG Speller", layout="centered")
+    st.set_page_config(page_title="Inkling – EEG + EMG Speller", layout="wide")
     inject_css()
     init_state()
+    # Animated neural backdrop
+    # st.markdown('<div class="inkling-neural"></div>', unsafe_allow_html=True)
+    # st.markdown('<div class="inkling-neural"></div>', unsafe_allow_html=True)
+    # st.markdown('<div class="inkling-neural"></div>', unsafe_allow_html=True)
 
-    # Hero section – logo above subtitle
+    # Hero section
     st.markdown(
         """
         <div class="inkling-hero">
@@ -1548,15 +1191,60 @@ Inkling is an experimental interface that combines brain signals and small muscl
 contractions to allow typing when standard keyboards and pointing devices are not usable.
 """
         )
+        st.markdown(
+            """
+            <div class="inkling-splash">
+                <div class="inkling-splash-title">Live session pulse</div>
+                <div class="inkling-splash-body">
+                    Watch the latest EEG class roll in and keep the backend running to feed this UI.
+                    The layout stretches on desktop while staying touch-friendly on mobile.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         render_speller_ui()
 
     with tab_how:
+        st.markdown(
+            """
+            <div class="inkling-splash">
+                <div class="inkling-splash-title">Signal story</div>
+                <div class="inkling-splash-body">
+                    Explore the visual rhythms, control loop, and why EEG + EMG make a stable pair.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         render_inkling_explainer()
 
     with tab_demo:
+        st.markdown(
+            """
+            <div class="inkling-splash">
+                <div class="inkling-splash-title">Simulated run</div>
+                <div class="inkling-splash-body">
+                    A guided decode of "PLATYPUS" with animated epochs, highlights, and EMG confirms.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         render_demo_tab()
 
     with tab_team:
+        st.markdown(
+            """
+            <div class="inkling-splash">
+                <div class="inkling-splash-title">People behind the signals</div>
+                <div class="inkling-splash-body">
+                    Meet the crew, see the roles, and pick up contacts for collaborations.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         render_meet_the_team()
 
 
