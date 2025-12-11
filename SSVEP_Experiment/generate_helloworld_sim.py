@@ -1,89 +1,97 @@
-"""
-Generate deterministic simulated EEG/EMG data that spells "HELLO WORLD".
-
-Outputs:
-  - eeg_emg_helloworld.npz (combined EEG+EMG for SIM_DATA_PATH)
-  - eeg_helloworld.npz (EEG-only)
-  - emg_helloworld.npz (EMG-only)
-"""
 import numpy as np
-from simulated_data import (
-    synth_ssvep,
-    synth_emg,
-    FREQS_MAIN,
-    PHASES_MAIN,
-)
 
-# Sequence of (main-key class id, letter class id) pairs to spell "HELLO WORLD"
-# Keypad class ids follow KEYPAD_LABELS order; letter class ids are global 12-class IDs.
-HELLO_WORLD_EEG_LABELS = [
-    3, 9,   # H  (key 4 -> class 3; letter H -> class 9)
-    2, 5,   # E  (key 3 -> class 2; letter E -> class 5)
-    4, 2,   # L  (key 5 -> class 4; letter L -> class 2)
-    4, 2,   # L
-    5, 7,   # O  (key 6 -> class 5; letter O -> class 7)
-    10, 1,  # space (key 0 -> class 10; space -> class 1)
-    8, 6,   # W  (key 9 -> class 8; letter W -> class 6)
-    5, 7,   # O
-    6, 11,  # R  (key 7 -> class 6; letter R -> class 11)
-    4, 2,   # L
-    2, 4,   # D  (key 3 -> class 2; letter D -> class 4)
+# Your true SSVEP frequencies from the speller
+FREQS_MAIN = [
+    9.25, 11.25, 13.25,
+    9.75, 11.75, 13.75,
+    10.25, 12.25, 14.25,
+    10.75, 12.75, 14.75
 ]
 
-# EMG confirmations: 1 (confirm) for every step (key + letter)
-HELLO_WORLD_EMG_LABELS = [1] * len(HELLO_WORLD_EEG_LABELS)
-
-
-def generate_helloworld(
+def generate_sim_dataset(
+    outfile="eeg_emg_helloworld.npz",
+    n_trials=200,
     fs_eeg=250,
-    eeg_duration=1.5,
-    eeg_noise_sd=0.3,
     fs_emg=1000,
-    emg_duration=1.0,
-    emg_noise_sd=0.3,
-    emg_burst_amp=3.0,
+    eeg_len=710,
+    emg_len=10000
 ):
-    eeg = np.stack([
-        synth_ssvep(
-            FREQS_MAIN[label],
-            PHASES_MAIN[label],
-            fs=fs_eeg,
-            duration=eeg_duration,
-            noise_sd=eeg_noise_sd,
+    """
+    Generates *strong*, *clean*, *FFT-detectable* SSVEP signals
+    that match EXACTLY what the speller's _freq_logits_from_signal()
+    is expecting.
+    """
+
+    eeg = []
+    labels = []
+
+    emg = []
+    emg_labels = []
+
+    for i in range(n_trials):
+
+        # ----------------------------
+        # 1. CHOOSE A LABEL 0–11
+        # ----------------------------
+        label = i % 12   # sequential → predictable
+        # OR use random: label = np.random.randint(0, 12)
+
+        labels.append(label)
+
+        # ----------------------------
+        # 2. EEG SYNTHESIS
+        # ----------------------------
+        t = np.arange(eeg_len) / fs_eeg
+        freq = FREQS_MAIN[label]
+
+        # STRONG sinusoid so FFT will ALWAYS detect the right target:
+        sig = (
+            1.8 * np.sin(2 * np.pi * freq * t)     # strong SSVEP
+            + 0.2 * np.random.randn(eeg_len)       # small noise
         )
-        for label in HELLO_WORLD_EEG_LABELS
-    ])
 
-    emg = np.stack([
-        synth_emg(
-            fs=fs_emg,
-            duration=emg_duration,
-            want_burst=bool(flag),
-            burst_amp=emg_burst_amp,
-            noise_sd=emg_noise_sd,
-        )
-        for flag in HELLO_WORLD_EMG_LABELS
-    ])
+        eeg.append(sig.astype(np.float32))
 
-    return {
-        "eeg": eeg,
-        "labels": np.array(HELLO_WORLD_EEG_LABELS, dtype=np.int32),
-        "fs_eeg": fs_eeg,
-        "emg": emg,
-        "emg_labels": np.array(HELLO_WORLD_EMG_LABELS, dtype=np.int8),
-        "fs_emg": fs_emg,
-    }
+        # ----------------------------
+        # 3. EMG SYNTHESIS (simple YES/NO)
+        # ----------------------------
+        yes = np.random.rand() > 0.5
+        emg_labels.append(int(yes))
 
+        base = 0.05 * np.random.randn(emg_len)
 
-def main():
-    data = generate_helloworld()
-    np.savez("eeg_emg_helloworld.npz", **data)
-    np.savez("eeg_helloworld.npz", eeg=data["eeg"], labels=data["labels"], fs_eeg=data["fs_eeg"])
-    np.savez("emg_helloworld.npz", emg=data["emg"], emg_labels=data["emg_labels"], fs_emg=data["fs_emg"])
-    print("Wrote eeg_emg_helloworld.npz, eeg_helloworld.npz, emg_helloworld.npz")
-    print("EEG shape:", data["eeg"].shape, "labels len:", len(data["labels"]))
-    print("EMG shape:", data["emg"].shape, "emg_labels len:", len(data["emg_labels"]))
+        if yes:
+            burst = np.zeros(emg_len)
+            burst[2000:3000] = 1.0 + 0.5 * np.random.randn(1000)
+            sig_emg = base + burst
+        else:
+            sig_emg = base
+
+        emg.append(sig_emg.astype(np.float32))
+
+    eeg = np.stack(eeg)
+    emg = np.stack(emg)
+    labels = np.array(labels, dtype=np.int64)
+    emg_labels = np.array(emg_labels, dtype=np.int64)
+
+    # ----------------------------
+    # SAVE NPZ
+    # ----------------------------
+    np.savez(
+        outfile,
+        eeg=eeg,
+        labels=labels,
+        fs_eeg=float(fs_eeg),
+        emg=emg,
+        emg_labels=emg_labels,
+        fs_emg=float(fs_emg)
+    )
+
+    print("Saved simulation →", outfile)
+    print("EEG:", eeg.shape)
+    print("EMG:", emg.shape)
+    print("Labels:", labels[:20])
 
 
 if __name__ == "__main__":
-    main()
+    generate_sim_dataset()
