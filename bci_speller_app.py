@@ -2,6 +2,7 @@
 # Streamlit UI for Inkling: hybrid EEG + EMG speller
 
 import base64
+import os
 import time
 from io import BytesIO
 from typing import Optional, List
@@ -17,9 +18,11 @@ import streamlit as st
 # GLOBAL CONFIG AND STYLING
 # ============================================================
 
-EEG_API_URL = "http://localhost:8000/predict"
-EEG_LAST_PRED_URL = "http://localhost:8000/last_auto_prediction"
-EMG_API_URL = "http://localhost:8001/predict_file"
+EEG_API_URL = os.getenv("EEG_API_URL", "http://localhost:8000/predict")
+EEG_LAST_PRED_URL = os.getenv(
+    "EEG_LAST_PRED_URL", "http://localhost:8000/last_auto_prediction"
+)
+EMG_API_URL = os.getenv("EMG_API_URL", "http://localhost:8001/predict_file")
 FS = 250  # demo sampling rate for EEG animation
 
 
@@ -1179,6 +1182,15 @@ def render_speller_ui():
             "Fetch the latest automatic EEG prediction from the backend watcher "
             "(`/last_auto_prediction`). Keep your EEG server running so it can populate this."
         )
+        if (
+            "localhost" in EEG_API_URL
+            or "localhost" in EEG_LAST_PRED_URL
+            or "localhost" in EMG_API_URL
+        ):
+            st.info(
+                "EEG/EMG API URLs are set to localhost. For Streamlit Cloud, set "
+                "`EEG_API_URL`, `EEG_LAST_PRED_URL`, and `EMG_API_URL` in the app settings."
+            )
 
         if st.button("Decode my thoughts"):
             result = get_last_eeg_prediction()
@@ -1233,202 +1245,201 @@ def render_speller_ui():
 
 
 # ============================================================
-# DEMO TAB (SIMULATED EEG + EMG)
+# DEMO TAB (SIMULATED EEG + EMG) - COMMENTED OUT
 # ============================================================
 
-def animate_epoch(epoch_pp: np.ndarray, fs: float, title: str):
-    n_channels, n_samples = epoch_pp.shape
+# def animate_epoch(epoch_pp: np.ndarray, fs: float, title: str):
+#     n_channels, n_samples = epoch_pp.shape
+#
+#     max_duration = 2.0
+#     max_samples = int(fs * max_duration)
+#     n_samples = min(n_samples, max_samples)
+#
+#     n_frames = 60
+#     frame_indices = np.linspace(1, n_samples, n_frames, dtype=int)
+#
+#     st.markdown(f"##### {title}")
+#     plot_placeholder = st.empty()
+#
+#     sleep_per_frame = max_duration / n_frames
+#
+#     for t_idx in frame_indices:
+#         data = epoch_pp[:, :t_idx]
+#         time_axis = np.arange(t_idx) / fs
+#
+#         fig, ax = plt.subplots(figsize=(10, 4))
+#         ax.set_title("Preprocessed EEG – eight channels")
+#         for ch_idx in range(n_channels):
+#             ax.plot(time_axis, data[ch_idx, :] + ch_idx * 5, label=f"Ch {ch_idx+1}")
+#         ax.set_xlabel("Time (s)")
+#         ax.set_ylabel("Z-scored amplitude + offset")
+#         ax.legend(loc="upper right", ncol=4)
+#         fig.tight_layout()
+#
+#         plot_placeholder.pyplot(fig)
+#         time.sleep(sleep_per_frame)
+#
+#
+# def show_selection_card(label: str, value: str):
+#     main_text = value
+#
+#     if "(" in value and "Hz" in value:
+#         left, right = value.split("(", 1)
+#         main_text = left.strip()
+#
+#     if main_text in ("", " "):
+#         main_text = "SPACE"
+#
+#     st.markdown(
+#         f"""
+#         <div style="
+#             margin-top: 18px;
+#             padding: 22px;
+#             border-radius: 24px;
+#             background: linear-gradient(135deg, #111827 0%, #1f2937 50%, #020617 100%);
+#             text-align: center;
+#             border: 1px solid rgba(148,163,184,0.6);
+#             box-shadow: 0 18px 40px rgba(15,23,42,0.7);
+#         ">
+#             <div style="
+#                 font-family: 'Lekton', monospace;
+#                 color: #9CA3AF;
+#                 font-size: 0.75rem;
+#                 letter-spacing: 0.35em;
+#                 text-transform: uppercase;
+#             ">
+#                 {label}
+#             </div>
+#             <div style="
+#                 font-family: 'Space Grotesk', system-ui, sans-serif;
+#                 color: #F9FAFB;
+#                 font-size: 4.0rem;
+#                 font-weight: 700;
+#                 margin-top: 8px;
+#                 letter-spacing: 0.24em;
+#             ">
+#                 {main_text}
+#             </div>
+#         </div>
+#         """,
+#         unsafe_allow_html=True,
+#     )
+#
+#
+# def show_emg_confirmation(text: str):
+#     st.markdown(
+#         f"""
+#         <div style="
+#             margin-top: 10px;
+#             padding: 0.7rem 1.4rem;
+#             border-radius: 999px;
+#             background: rgba(71,21,18,0.08);
+#             border: 1px solid rgba(71,21,18,0.35);
+#             display: inline-flex;
+#             align-items: center;
+#             gap: 0.6rem;
+#             font-family: 'Lekton', monospace;
+#             font-size: 0.72rem;
+#             letter-spacing: 0.22em;
+#             text-transform: uppercase;
+#             color: #471512;
+#         ">
+#             <span style="
+#                 width: 10px;
+#                 height: 10px;
+#                 border-radius: 999px;
+#                 background: #16A34A;
+#                 box-shadow: 0 0 0 4px rgba(22,163,74,0.25);
+#             "></span>
+#             EMG agrees · {text}
+#         </div>
+#         """,
+#         unsafe_allow_html=True,
+#     )
+#
+#
+# def _find_key_for_letter(letter: str) -> Optional[str]:
+#     for k, tokens in LETTER_MAP.items():
+#         for tok in tokens:
+#             if tok and tok[0] == letter:
+#                 return k
+#     return None
 
-    max_duration = 2.0
-    max_samples = int(fs * max_duration)
-    n_samples = min(n_samples, max_samples)
-
-    n_frames = 60
-    frame_indices = np.linspace(1, n_samples, n_frames, dtype=int)
-
-    st.markdown(f"##### {title}")
-    plot_placeholder = st.empty()
-
-    sleep_per_frame = max_duration / n_frames
-
-    for t_idx in frame_indices:
-        data = epoch_pp[:, :t_idx]
-        time_axis = np.arange(t_idx) / fs
-
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.set_title("Preprocessed EEG – eight channels")
-        for ch_idx in range(n_channels):
-            ax.plot(time_axis, data[ch_idx, :] + ch_idx * 5, label=f"Ch {ch_idx+1}")
-        ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Z-scored amplitude + offset")
-        ax.legend(loc="upper right", ncol=4)
-        fig.tight_layout()
-
-        plot_placeholder.pyplot(fig)
-        time.sleep(sleep_per_frame)
-
-
-def show_selection_card(label: str, value: str):
-    main_text = value
-
-    if "(" in value and "Hz" in value:
-        left, right = value.split("(", 1)
-        main_text = left.strip()
-
-    if main_text in ("", " "):
-        main_text = "SPACE"
-
-    st.markdown(
-        f"""
-        <div style="
-            margin-top: 18px;
-            padding: 22px;
-            border-radius: 24px;
-            background: linear-gradient(135deg, #111827 0%, #1f2937 50%, #020617 100%);
-            text-align: center;
-            border: 1px solid rgba(148,163,184,0.6);
-            box-shadow: 0 18px 40px rgba(15,23,42,0.7);
-        ">
-            <div style="
-                font-family: 'Lekton', monospace;
-                color: #9CA3AF;
-                font-size: 0.75rem;
-                letter-spacing: 0.35em;
-                text-transform: uppercase;
-            ">
-                {label}
-            </div>
-            <div style="
-                font-family: 'Space Grotesk', system-ui, sans-serif;
-                color: #F9FAFB;
-                font-size: 4.0rem;
-                font-weight: 700;
-                margin-top: 8px;
-                letter-spacing: 0.24em;
-            ">
-                {main_text}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def show_emg_confirmation(text: str):
-    st.markdown(
-        f"""
-        <div style="
-            margin-top: 10px;
-            padding: 0.7rem 1.4rem;
-            border-radius: 999px;
-            background: rgba(71,21,18,0.08);
-            border: 1px solid rgba(71,21,18,0.35);
-            display: inline-flex;
-            align-items: center;
-            gap: 0.6rem;
-            font-family: 'Lekton', monospace;
-            font-size: 0.72rem;
-            letter-spacing: 0.22em;
-            text-transform: uppercase;
-            color: #471512;
-        ">
-            <span style="
-                width: 10px;
-                height: 10px;
-                border-radius: 999px;
-                background: #16A34A;
-                box-shadow: 0 0 0 4px rgba(22,163,74,0.25);
-            "></span>
-            EMG agrees · {text}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _find_key_for_letter(letter: str) -> Optional[str]:
-    for k, tokens in LETTER_MAP.items():
-        for tok in tokens:
-            if tok and tok[0] == letter:
-                return k
-    return None
-
-
-def render_demo_tab():
-    st.markdown("### Demo: live EEG + EMG decoding (simulated)")
-
-    st.markdown(
-        """
-This tab replays a single simulated run of the speller.
-
-You’ll see:
-
-- multi-channel preprocessed EEG epochs
-- a proposed keypad key
-- a short EMG “yes” burst
-- then a refined letter choice
-
-The decoded text builds up character by character, as it would in a real session.
-"""
-    )
-
-    if st.button("Start demo run"):
-        hidden_word = "PLATYPUS"
-        typed = ""
-        typed_placeholder = st.empty()
-
-        for letter in hidden_word:
-            key = _find_key_for_letter(letter)
-            if key is None:
-                continue
-
-            epoch_key = np.random.randn(8, 500)
-            animate_epoch(epoch_key, FS, "EEG window – keypad selection")
-            show_selection_card("Key selected", key)
-            time.sleep(0.6)
-            show_emg_confirmation("key")
-            st.markdown("---")
-
-            epoch_letter = np.random.randn(8, 500)
-            animate_epoch(epoch_letter, FS, "EEG window – letter selection")
-
-            display_token = None
-            for tok in LETTER_MAP.get(key, []):
-                if tok and tok[0] == letter:
-                    display_token = tok
-                    break
-
-            if display_token is None:
-                display_token = letter
-
-            show_selection_card("Letter selected", display_token)
-            time.sleep(0.6)
-            show_emg_confirmation("letter")
-
-            typed += letter
-            typed_placeholder.markdown(
-                f"""
-                <div style="
-                    margin-top: 18px;
-                    font-family: 'Lekton', monospace;
-                    font-size: 0.85rem;
-                    letter-spacing: 0.22em;
-                    text-transform: uppercase;
-                    color: #471512;
-                ">
-                    Decoded so far ·
-                    <span style="
-                        font-family: 'Space Grotesk', system-ui, sans-serif;
-                        font-size: 1.6rem;
-                        letter-spacing: 0.18em;
-                        margin-left: 0.6rem;
-                    ">{typed}</span>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            st.markdown("---")
+# def render_demo_tab():
+#     st.markdown("### Demo: live EEG + EMG decoding (simulated)")
+#
+#     st.markdown(
+#         """
+# This tab replays a single simulated run of the speller.
+#
+# You’ll see:
+#
+# - multi-channel preprocessed EEG epochs
+# - a proposed keypad key
+# - a short EMG “yes” burst
+# - then a refined letter choice
+#
+# The decoded text builds up character by character, as it would in a real session.
+# """
+#     )
+#
+#     if st.button("Start demo run"):
+#         hidden_word = "PLATYPUS"
+#         typed = ""
+#         typed_placeholder = st.empty()
+#
+#         for letter in hidden_word:
+#             key = _find_key_for_letter(letter)
+#             if key is None:
+#                 continue
+#
+#             epoch_key = np.random.randn(8, 500)
+#             animate_epoch(epoch_key, FS, "EEG window – keypad selection")
+#             show_selection_card("Key selected", key)
+#             time.sleep(0.6)
+#             show_emg_confirmation("key")
+#             st.markdown("---")
+#
+#             epoch_letter = np.random.randn(8, 500)
+#             animate_epoch(epoch_letter, FS, "EEG window – letter selection")
+#
+#             display_token = None
+#             for tok in LETTER_MAP.get(key, []):
+#                 if tok and tok[0] == letter:
+#                     display_token = tok
+#                     break
+#
+#             if display_token is None:
+#                 display_token = letter
+#
+#             show_selection_card("Letter selected", display_token)
+#             time.sleep(0.6)
+#             show_emg_confirmation("letter")
+#
+#             typed += letter
+#             typed_placeholder.markdown(
+#                 f"""
+#                 <div style="
+#                     margin-top: 18px;
+#                     font-family: 'Lekton', monospace;
+#                     font-size: 0.85rem;
+#                     letter-spacing: 0.22em;
+#                     text-transform: uppercase;
+#                     color: #471512;
+#                 ">
+#                     Decoded so far ·
+#                     <span style="
+#                         font-family: 'Space Grotesk', system-ui, sans-serif;
+#                         font-size: 1.6rem;
+#                         letter-spacing: 0.18em;
+#                         margin-left: 0.6rem;
+#                     ">{typed}</span>
+#                 </div>
+#                 """,
+#                 unsafe_allow_html=True,
+#             )
+#
+#             st.markdown("---")
 
 
 # ============================================================
@@ -1465,12 +1476,11 @@ def main():
         unsafe_allow_html=True,
     )
 
-    tab_home, tab_how, tab_demo, tab_team, tab_live = st.tabs(
-        ["Home", "How it works", "Demo: EEG + EMG flow", "Meet the team", "Live demo"]
+    tab_home, tab_how, tab_team = st.tabs(
+        ["Home", "How it works", "Meet the team"]
     )
 
     with tab_home:
-        # Mission statement with elegant styling
         st.markdown(
             """
             <div style="
@@ -1495,241 +1505,83 @@ def main():
             unsafe_allow_html=True,
         )
 
-        # Three-column feature grid
         col_a, col_b, col_c = st.columns(3, gap="medium")
 
+        card_a = """
+<div class="inkling-card" style="height: 100%; display: flex; flex-direction: column;">
+    <div style="
+        width: 56px;
+        height: 6px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, rgba(42,79,152,0.4), rgba(42,79,152,0.08));
+        margin-bottom: 1.2rem;
+    "></div>
+    <h3 style="
+        font-family: 'Gilroy', 'Inter', sans-serif;
+        font-weight: 750;
+        letter-spacing: 0.04em;
+        margin-bottom: 0.7rem;
+        color: var(--ink-primary);
+    ">EEG Decoding</h3>
+    <p style="margin: 0; font-size: 0.98rem; line-height: 1.7; flex-grow: 1;">
+        SSVEP signals guide selection across a 36-letter layout organized into
+        twelve flickering blocks with distinct frequencies.
+    </p>
+</div>
+"""
+
+        card_b = """
+<div class="inkling-card" style="height: 100%; display: flex; flex-direction: column;">
+    <div style="
+        width: 56px;
+        height: 6px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, rgba(134,1,0,0.4), rgba(134,1,0,0.08));
+        margin-bottom: 1.2rem;
+    "></div>
+    <h3 style="
+        font-family: 'Gilroy', 'Inter', sans-serif;
+        font-weight: 750;
+        letter-spacing: 0.04em;
+        margin-bottom: 0.7rem;
+        color: var(--ink-red);
+    ">EMG Control</h3>
+    <p style="margin: 0; font-size: 0.98rem; line-height: 1.7; flex-grow: 1;">
+        Tiny muscle bursts serve as decisive confirmation signals—no sustained
+        force required, just reliable voluntary contractions.
+    </p>
+</div>
+"""
+
+        card_c = """
+<div class="inkling-card" style="height: 100%; display: flex; flex-direction: column;">
+    <div style="
+        width: 56px;
+        height: 6px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, rgba(63,17,16,0.4), rgba(63,17,16,0.1));
+        margin-bottom: 1.2rem;
+    "></div>
+    <h3 style="
+        font-family: 'Gilroy', 'Inter', sans-serif;
+        font-weight: 750;
+        letter-spacing: 0.04em;
+        margin-bottom: 0.7rem;
+        color: var(--ink-brown);
+    ">Real-Time Flow</h3>
+    <p style="margin: 0; font-size: 0.98rem; line-height: 1.7; flex-grow: 1;">
+        Continuous EEG proposals paired with discrete EMG decisions create a
+        hybrid control loop optimized for minimal fatigue.
+    </p>
+</div>
+"""
+
         with col_a:
-            st.markdown(
-                """
-                <div class="inkling-card" style="height: 100%; display: flex; flex-direction: column;">
-                    <div style="
-                        width: 56px;
-                        height: 56px;
-                        border-radius: 16px;
-                        background: linear-gradient(135deg, rgba(42,79,152,0.15), rgba(42,79,152,0.08));
-                        display: grid;
-                        place-items: center;
-                        margin-bottom: 1.2rem;
-                        border: 1px solid rgba(42,79,152,0.2);
-                    ">
-                        <span style="font-size: 1.8rem;">🧠</span>
-                    </div>
-                    <h3 style="
-                        font-family: 'Gilroy', 'Inter', sans-serif;
-                        font-weight: 750;
-                        letter-spacing: 0.04em;
-                        margin-bottom: 0.7rem;
-                        color: var(--ink-primary);
-                    ">EEG Decoding</h3>
-                    <p style="margin: 0; font-size: 0.98rem; line-height: 1.7; flex-grow: 1;">
-                        SSVEP signals guide selection across a 36-letter layout organized into
-                        twelve flickering blocks with distinct frequencies.
-                    </p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
+            st.markdown(card_a, unsafe_allow_html=True)
         with col_b:
-            st.markdown(
-                """
-                <div class="inkling-card" style="height: 100%; display: flex; flex-direction: column;">
-                    <div style="
-                        width: 56px;
-                        height: 56px;
-                        border-radius: 16px;
-                        background: linear-gradient(135deg, rgba(134,1,0,0.15), rgba(134,1,0,0.08));
-                        display: grid;
-                        place-items: center;
-                        margin-bottom: 1.2rem;
-                        border: 1px solid rgba(134,1,0,0.2);
-                    ">
-                        <span style="font-size: 1.8rem;">💪</span>
-                    </div>
-                    <h3 style="
-                        font-family: 'Gilroy', 'Inter', sans-serif;
-                        font-weight: 750;
-                        letter-spacing: 0.04em;
-                        margin-bottom: 0.7rem;
-                        color: var(--ink-red);
-                    ">EMG Control</h3>
-                    <p style="margin: 0; font-size: 0.98rem; line-height: 1.7; flex-grow: 1;">
-                        Tiny muscle bursts serve as decisive confirmation signals—no sustained
-                        force required, just reliable voluntary contractions.
-                    </p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
+            st.markdown(card_b, unsafe_allow_html=True)
         with col_c:
-            st.markdown(
-                """
-                <div class="inkling-card" style="height: 100%; display: flex; flex-direction: column;">
-                    <div style="
-                        width: 56px;
-                        height: 56px;
-                        border-radius: 16px;
-                        background: linear-gradient(135deg, rgba(63,17,16,0.15), rgba(63,17,16,0.08));
-                        display: grid;
-                        place-items: center;
-                        margin-bottom: 1.2rem;
-                        border: 1px solid rgba(63,17,16,0.2);
-                    ">
-                        <span style="font-size: 1.8rem;">⚡</span>
-                    </div>
-                    <h3 style="
-                        font-family: 'Gilroy', 'Inter', sans-serif;
-                        font-weight: 750;
-                        letter-spacing: 0.04em;
-                        margin-bottom: 0.7rem;
-                        color: var(--ink-brown);
-                    ">Real-Time Flow</h3>
-                    <p style="margin: 0; font-size: 0.98rem; line-height: 1.7; flex-grow: 1;">
-                        Continuous EEG proposals paired with discrete EMG decisions create a
-                        hybrid control loop optimized for minimal fatigue.
-                    </p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        # # Large showcase section
-        # st.markdown(
-        #     """
-        #     <div style="
-        #         margin: 3.5rem 0 2rem;
-        #         padding: 2.8rem 2.4rem;
-        #         border-radius: 24px;
-        #         background: linear-gradient(135deg, rgba(42,79,152,0.06), rgba(134,1,0,0.04)),
-        #                     linear-gradient(150deg, rgba(255,255,255,0.98), rgba(236,226,205,0.92));
-        #         border: 1px solid rgba(42,79,152,0.16);
-        #         box-shadow: 0 20px 48px rgba(0,0,0,0.14);
-        #         position: relative;
-        #         overflow: hidden;
-        #     ">
-        #         <div style="
-        #             position: absolute;
-        #             inset: -40% auto auto -20%;
-        #             width: 60%;
-        #             height: 140%;
-        #             background: radial-gradient(circle at 30% 40%, rgba(42,79,152,0.14), transparent 55%);
-        #             opacity: 0.8;
-        #             pointer-events: none;
-        #         "></div>
-
-        #         <div style="position: relative; z-index: 1;">
-        #             <div style="
-        #                 font-family: 'Lekton', monospace;
-        #                 text-transform: uppercase;
-        #                 letter-spacing: 0.32em;
-        #                 font-size: 0.72rem;
-        #                 color: var(--ink-primary);
-        #                 margin-bottom: 0.8rem;
-        #                 opacity: 0.9;
-        #             ">Navigation guide</div>
-
-        #             <h2 style="
-        #                 font-family: 'Gilroy', 'Inter', sans-serif;
-        #                 font-weight: 750;
-        #                 font-size: clamp(1.8rem, 3vw, 2.4rem);
-        #                 letter-spacing: 0.04em;
-        #                 margin-bottom: 1.8rem;
-        #                 color: #0a0f14;
-        #             ">Explore the interface</h2>
-
-        #             <div style="
-        #                 display: grid;
-        #                 grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        #                 gap: 1.4rem;
-        #                 margin-top: 1.6rem;
-        #             ">
-        #                 <div style="
-        #                     padding: 1.3rem 1.5rem;
-        #                     border-radius: 16px;
-        #                     background: rgba(255,255,255,0.75);
-        #                     border: 1px solid rgba(42,79,152,0.14);
-        #                     transition: all 140ms ease;
-        #                 ">
-        #                     <div style="
-        #                         font-family: 'Space Grotesk', system-ui, sans-serif;
-        #                         font-weight: 700;
-        #                         font-size: 1.8rem;
-        #                         color: var(--ink-primary);
-        #                         margin-bottom: 0.4rem;
-        #                     ">01</div>
-        #                     <div style="
-        #                         font-weight: 600;
-        #                         margin-bottom: 0.4rem;
-        #                         font-size: 1.05rem;
-        #                     ">How it works</div>
-        #                     <p style="
-        #                         margin: 0;
-        #                         font-size: 0.92rem;
-        #                         line-height: 1.6;
-        #                         color: #4b5563;
-        #                     ">Deep dive into SSVEP, EMG bursts, and the control state machine</p>
-        #                 </div>
-
-        #                 <div style="
-        #                     padding: 1.3rem 1.5rem;
-        #                     border-radius: 16px;
-        #                     background: rgba(255,255,255,0.75);
-        #                     border: 1px solid rgba(134,1,0,0.14);
-        #                     transition: all 140ms ease;
-        #                 ">
-        #                     <div style="
-        #                         font-family: 'Space Grotesk', system-ui, sans-serif;
-        #                         font-weight: 700;
-        #                         font-size: 1.8rem;
-        #                         color: var(--ink-red);
-        #                         margin-bottom: 0.4rem;
-        #                     ">02</div>
-        #                     <div style="
-        #                         font-weight: 600;
-        #                         margin-bottom: 0.4rem;
-        #                         font-size: 1.05rem;
-        #                     ">Demo flow</div>
-        #                     <p style="
-        #                         margin: 0;
-        #                         font-size: 0.92rem;
-        #                         line-height: 1.6;
-        #                         color: #4b5563;
-        #                     ">Watch a simulated decode with animated epochs and decision points</p>
-        #                 </div>
-
-        #                 <div style="
-        #                     padding: 1.3rem 1.5rem;
-        #                     border-radius: 16px;
-        #                     background: rgba(255,255,255,0.75);
-        #                     border: 1px solid rgba(63,17,16,0.14);
-        #                     transition: all 140ms ease;
-        #                 ">
-        #                     <div style="
-        #                         font-family: 'Space Grotesk', system-ui, sans-serif;
-        #                         font-weight: 700;
-        #                         font-size: 1.8rem;
-        #                         color: var(--ink-brown);
-        #                         margin-bottom: 0.4rem;
-        #                     ">03</div>
-        #                     <div style="
-        #                         font-weight: 600;
-        #                         margin-bottom: 0.4rem;
-        #                         font-size: 1.05rem;
-        #                     ">Live demo</div>
-        #                     <p style="
-        #                         margin: 0;
-        #                         font-size: 0.92rem;
-        #                         line-height: 1.6;
-        #                         color: #4b5563;
-        #                     ">Connect to your EEG and EMG servers for real-time predictions</p>
-        #                 </div>
-        #             </div>
-        #         </div>
-        #     </div>
-        #     """,
-        #     unsafe_allow_html=True,
-        # )
+            st.markdown(card_c, unsafe_allow_html=True)
 
         # Video section with enhanced styling
         st.markdown(
@@ -1798,19 +1650,19 @@ def main():
         )
         render_inkling_explainer()
 
-    with tab_demo:
-        st.markdown(
-            """
-            <div class="inkling-splash">
-                <div class="inkling-splash-title">Simulated run</div>
-                <div class="inkling-splash-body">
-                    A guided decode of "PLATYPUS" with animated epochs, highlights, and EMG confirms.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        render_demo_tab()
+    # with tab_demo:
+    #     st.markdown(
+    #         """
+    #         <div class="inkling-splash">
+    #             <div class="inkling-splash-title">Simulated run</div>
+    #             <div class="inkling-splash-body">
+    #                 A guided decode of "PLATYPUS" with animated epochs, highlights, and EMG confirms.
+    #             </div>
+    #         </div>
+    #         """,
+    #         unsafe_allow_html=True,
+    #     )
+    #     render_demo_tab()
 
     with tab_team:
         st.markdown(
@@ -1825,20 +1677,6 @@ def main():
             unsafe_allow_html=True,
         )
         render_meet_the_team()
-
-    with tab_live:
-        st.markdown(
-            """
-            <div class="inkling-splash">
-                <div class="inkling-splash-title">Live EEG + EMG</div>
-                <div class="inkling-splash-body">
-                    Keep your EEG and EMG servers running, then fetch the latest prediction and status here.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        render_speller_ui()
 
 
 if __name__ == "__main__":
